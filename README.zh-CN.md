@@ -4,40 +4,58 @@
 
 适用：本机 VR 遥操环境，当前机型为 **正装单臂 + 夹爪**（`arms = "single"`、`side = false`、`grip = "can0@127.0.0.1:9003"`）。
 
-> 本文所有用户路径都写成环境变量或相对路径，不绑定用户名：
-> `$HOME`、`${XDG_CONFIG_HOME:-$HOME/.config}`、`${XDG_STATE_HOME:-$HOME/.local/state}`。
-> 仓库内部一律用相对路径。
+> **装完就能用，不需要设置任何环境变量。** 安装包把路径都定死了，本文一律写默认值；
+> 只有把配置 / 状态整体挪到别处（共享账号、只读家目录）时才需要动 `XDG_CONFIG_HOME` / `XDG_STATE_HOME`。
 
-## 下载与安装
+| 用途 | 默认位置 |
+| --- | --- |
+| 桥（程序 + 脚本 + SDK） | `/opt/litearm/litearm-vr-bridge` |
+| 桥的配置 | `~/.config/litearm-vr-bridge/config.toml`（没有这份文件 = 全用出厂默认） |
+| 上位机改的覆盖层 | `~/.config/litearm-vr-bridge/overrides.json` |
+| 臂映射记录（串口 / 夹爪 CAN） | `~/.config/litearm-vr-bridge/arms.json` |
+| 受管进程日志 | `~/.local/state/litearm-vr-bridge/logs/` |
+| 上位机 | 应用菜单 **LiteArm VR**，或命令 `litearm-studio` |
 
-本版本的 Debian 安装包发布在 [Releases](https://github.com/nexform-tech/litearm-vr/releases) 页面：
-
-```bash
-sudo apt install ./litearm-vr-bundle_0.1.0_amd64.deb
-```
-
-该包安装桥、上游 teleop/follow、冻结版 teleop 可执行文件、各 SDK、`litearm-can` DKMS 驱动（需要 `dkms`、`build-essential` 与匹配的内核头文件）、udev 规则和 systemd 单元；`postinst` 会配置 DKMS 模块，并为安装用户把桥装成用户级 systemd 服务。
-
-安装后体检：
-
-```bash
-/opt/litearm/litearm-vr-bridge/scripts/up.sh --doctor
-```
+> 桥**不读**环境变量（唯一例外是 `config.toml` 里的 `[upstream.env]`，见 5.9）；
+> 旧版那份 `/etc/litearm-vr-bridge.env` 已经不再读，留着的可以删掉。
+> 上游启动脚本认的 `LITEARM_PY_SRC` / `LITEGRIP_SDK` 由安装脚本写进 systemd 单元，不用你 export。
 
 ---
 
-## 0. 先设置环境变量（每个新终端执行一次）
+## 下载与安装
+
+安装：**桥的 deb**，外加**VR专用上位机** `litearm-studio` 的 deb。发布页见 [Releases](https://github.com/nexform-tech/litearm-vr/releases)。
 
 ```bash
-export STUDIO_DIR="${HOME}/vr/litearm-vr-bridge/studio"      # 上位机源码/构建目录（随桥仓库）
-export BRIDGE_DIR="${HOME}/vr/litearm-vr-bridge"              # 桥的源码检出（含预设脚本）
-export BRIDGE_INSTALL="${LITEARM_BRIDGE_INSTALL:-/opt/litearm/litearm-vr-bridge}"  # 已安装的桥
-export BRIDGE_CONFIG_DIR="${XDG_CONFIG_HOME:-${HOME}/.config}/litearm-vr-bridge"
-export BRIDGE_STATE_DIR="${XDG_STATE_HOME:-${HOME}/.local/state}/litearm-vr-bridge"
-export VR_STUDIO="${HOME}/.local/bin/litearm-vr-only"          # 启动器
+sudo dpkg -i ./litearm-vr-bridge_0.1.2_amd64.deb 
+sudo dpkg -i ./litearm-can-dkms_0.1.2_all.deb
 ```
 
-可以放进 `~/.bashrc`，以后开终端不用再设。
+- 需要联网装 `dkms` 与匹配的内核头文件（`linux-headers-$(uname -r)`）。**不需要 git，不需要拉代码。**
+- Secure Boot 开着时系统会拒绝未签名的 CAN 驱动，需要关掉或给模块签名。
+- `postinst` 会配置 DKMS 模块，并把桥装成**装它的那个用户**的用户级 systemd 服务、随即启动。
+  认不出该装给谁（没人登录、也没在终端里 sudo）时它不猜，只打印那条命令：
+  用你自己的账号跑一次 `/opt/litearm/litearm-vr-bridge/scripts/install.sh`。
+- 升级：同样一条命令，桥会自动重启；**已有的 `config.toml` 不会被覆盖**。
+
+上位机（界面）是单独的包，按 [litearm-studio 的发布页](https://github.com/nexform-tech/litearm-studio/releases) 装：
+
+```bash
+sudo dpkg -i ./litearm-studio_<版本>_amd64.deb
+```
+
+装完 `litearm-studio` 就在 PATH 上，应用菜单里出现 **LiteArm VR**。窗口用的是系统自带的 GTK / WebKitGTK（apt 依赖会装上），不需要另装浏览器或 `pywebview`。
+
+安装后确认服务在跑：
+
+```bash
+systemctl --user status litearm-vr-bridge
+journalctl --user -u litearm-vr-bridge -n 50 --no-pager   # 起不来的原因都在这里
+```
+
+> 安装包的 `scripts/` 里另有几个辅助脚本（`up.sh` 体检 / 看状态、`preset.sh` 换机型预设、
+> `ports.sh` 列板子与串口）。它们只是把下面的 `systemctl` / `journalctl` 包了一层；
+> **这几个脚本不在也不影响本文的任何操作**，照下面的命令做即可。
 
 ---
 
@@ -50,24 +68,26 @@ export VR_STUDIO="${HOME}/.local/bin/litearm-vr-only"          # 启动器
 ### 终端
 
 ```bash
-"${VR_STUDIO}"
+litearm-studio
 ```
 
-启动器内部会先确保桥服务在运行，然后用本软件的前端打开窗口。
-
-> 源码 daemon 需要 `pywebview`；缺失时启动器会明确提示：
-> `python3 -m pip install --user pywebview`。
+程序会打印监听地址并打开窗口。已经有一个实例在跑时，再启动不会多开进程，而是把那个窗口抬到前面。
+**关掉窗口就是退出界面**；桥是独立的 systemd 服务，不跟着退（要停桥见 §6）。
 
 ### 仿真试跑（不碰真机）
 
 ```bash
-"${VR_STUDIO}" --fake
+litearm-studio --fake
 ```
 
-> ⚠ **不要用原来的 “LiteArm Studio” 图标做 VR 遥操。**
-> 那个是完整版，daemon 会自动连接并占用 `/dev/ttyACM0`；VR 遥操时这个串口必须留给桥的 follow 服务。
-> 本启动器用 `--port /dev/ttyDOES_NOT_EXIST` 正是为了让 daemon 不抢串口。
-> VR 页的状态、关节角和电机负载都来自桥的 zenoh 通道，不需要 daemon 自己连臂。
+> ⚠ VR 遥操时，机械臂那条串口必须留给桥的 follow 服务。
+> 如果界面自带的守护进程去抢它（表现：页面连不上臂、follow 起不来），就让它别连臂：
+>
+> ```bash
+> litearm-studio --port /dev/ttyDOES_NOT_EXIST
+> ```
+>
+> VR 页的状态、关节角和电机负载都来自桥的 zenoh 通道，不需要界面自己连臂。
 
 ---
 
@@ -118,9 +138,9 @@ echo "ws://$(hostname -I | awk '{print $1}'):8765"
 - 夹爪不动时检查：
   ```bash
   ip -br link | grep can0
-  tail -40 "${BRIDGE_STATE_DIR}/logs/gripper_server_armA.log"
+  tail -40 ~/.local/state/litearm-vr-bridge/logs/gripper_server_armA.log
   ```
-  `can0` 不在、或日志里写未使能，就先查 CAN 盒/线。
+  `can0` 不在、或日志里写未使能，就先查 CAN 盒/线（`dkms status` 里 `litearm-can` 应为 `installed`）。
 
 ---
 
@@ -129,7 +149,7 @@ echo "ws://$(hostname -I | awk '{print $1}'):8765"
 配置文件：
 
 ```bash
-"${BRIDGE_CONFIG_DIR}/config.toml"
+~/.config/litearm-vr-bridge/config.toml
 ```
 
 优先级从高到低：
@@ -140,21 +160,20 @@ echo "ws://$(hostname -I | awk '{print $1}'):8765"
 
 ### 4.1 用预设（改机型首选）
 
-预设脚本在**源码检出**里（已安装的 0.1.0 包里没有这个脚本）：
+预设脚本在安装包的 `scripts/` 里：
 
 ```bash
-cd "${BRIDGE_DIR}"
-./scripts/preset.sh list
-./scripts/preset.sh single-upright-grip     # 正装单臂 + 夹爪
+/opt/litearm/litearm-vr-bridge/scripts/preset.sh list
+/opt/litearm/litearm-vr-bridge/scripts/preset.sh single-upright-grip   # 正装单臂 + 夹爪
 ```
 
-脚本会：备份旧配置 → 校验 → 写入 `${BRIDGE_CONFIG_DIR}/config.toml` → 重启桥。
-备份文件名形如 `config.toml.bak-YYYYmmdd-HHMMSS`。
+脚本会：备份旧配置 → 校验 → 写入 `~/.config/litearm-vr-bridge/config.toml` → 重启桥，备份文件名形如 `config.toml.bak-YYYYmmdd-HHMMSS`。
+没有这个脚本（精简安装 / 源码直装）就直接按 4.2 手改 `config.toml`。
 
 ### 4.2 手工编辑
 
 ```bash
-nano "${BRIDGE_CONFIG_DIR}/config.toml"
+nano ~/.config/litearm-vr-bridge/config.toml
 systemctl --user restart litearm-vr-bridge
 ```
 
@@ -174,9 +193,11 @@ grip = "can0@127.0.0.1:9003"
 
 ```bash
 ls /dev/serial/by-id/
+ip -br link | grep can                     # 夹爪所在的 CAN 口
 ```
 
-把看到的那条 STM32 路径写进去（TOML **不会**展开环境变量，必须写实际路径）：
+（安装包里另有 `scripts/ports.sh`，把这些列成一张表、`-w` 还能监视插拔；没有它上面两条就够。）
+把看到的那条 STM32 路径写进去（TOML **不会**展开 `$HOME` 之类的变量，必须写实际路径）：
 
 ```toml
 [arms.A]
@@ -202,14 +223,14 @@ VR 页右上角 **「链路配置」** 可直接改：
 页面改的项写入：
 
 ```bash
-"${BRIDGE_CONFIG_DIR}/overrides.json"
+~/.config/litearm-vr-bridge/overrides.json
 ```
 
 它**优先于** `config.toml`。要让 `config.toml` 重新生效：
 
 - 在对话框里点「恢复默认」，或
 - ```bash
-  rm -f "${BRIDGE_CONFIG_DIR}/overrides.json"
+  rm -f ~/.config/litearm-vr-bridge/overrides.json
   systemctl --user restart litearm-vr-bridge
   ```
 
@@ -218,15 +239,65 @@ VR 页右上角 **「链路配置」** 可直接改：
 ### 4.4 确认改对了
 
 ```bash
-# 实际生效的配置（含 overrides）
-PYTHONPATH="${BRIDGE_INSTALL}/src:${BRIDGE_INSTALL}/vendor" \
-  python3 -m litearm_vr_bridge --print-config
-
-# 体检：配置来源 / 串口 / CAN / 进程 / 参数
-cd "${BRIDGE_INSTALL}" && ./scripts/up.sh --doctor
+systemctl --user restart litearm-vr-bridge
+systemctl --user status litearm-vr-bridge
+journalctl --user -u litearm-vr-bridge -n 30 --no-pager
 ```
 
-`--doctor` 里 `7447` / `8765` 显示“被占用”是因为桥自己正在监听，属正常。
+启动日志里逐条写着：头显入口与 zenoh 端点、每条臂的串口与 follow 端点、受管进程命令、
+以及**有哪几项被 `overrides.json` 压住了**（会点出 `config.toml` 里相应的值）。
+“改了没生效”先看这几行。
+
+### 4.5 进阶：换 `follow.yaml` / `teleop.yaml`（夹爪力度、跟手手感、标定）
+
+桥自己的参数在 `config.toml`；**夹爪 / follow 的参数在 `follow.yaml`，teleop 的参数在 `teleop.yaml`**。
+包内那两份在 `/opt` 下、升级会被覆盖，所以改法是「复制到家目录 + 告诉桥读那份」：
+
+```bash
+mkdir -p ~/litearm-config
+cp -n /opt/litearm/litearm-vr-bridge/submodules/litearm-vr-follow/follow.yaml \
+      ~/litearm-config/follow.yaml
+cp -n /opt/litearm/litearm-vr-bridge/submodules/litearm-vr-teleop/teleop/config/teleop.yaml \
+      ~/litearm-config/teleop.yaml
+```
+
+然后在 `~/.config/litearm-vr-bridge/config.toml` **末尾**加上这两行（`[upstream.env]` 是段名，要带方括号）：
+
+```toml
+[upstream.env]
+FOLLOW_CONFIG = "/home/<你的用户名>/litearm-config/follow.yaml"
+TELEOP_CONFIG = "/home/<你的用户名>/litearm-config/teleop.yaml"
+```
+
+```bash
+systemctl --user restart litearm-vr-bridge
+```
+
+- `FOLLOW_CONFIG` 由 follow 的启动脚本自己读（follow / 夹爪 / 状态汇总都读它）；`TELEOP_CONFIG` 由桥翻成上游 launcher 的 `--config` 传下去。值**必须是绝对路径**：这里不展开 `~` 和 `$HOME`，写错当场报错。
+- 这一段只收**上游启动脚本认的名字**（除这两条外，如 `LITEARM_PY_SRC`）；桥自己的键（`machine.*` 等）写进这里会报错，并指出该写在哪一段。
+- 升级只覆盖 `/opt` 下的两份 yaml，`~/litearm-config/` 里的不受影响 —— 不需要再动包内的 yaml，也不需要软链接。
+- 改完要重启桥；teleop 进程还要等页面上点「开始遥操」才会拉起。
+
+常改的几项（出厂值取自当前包内这两份 yaml）：
+
+| 想改什么 | 文件 | 键 | 出厂值 |
+| --- | --- | --- | --- |
+| 夹爪夹持力上限（N） | `follow.yaml` | `gripper.force` | `20.0`（夹持力 ≈ 这个值；×0.1 = Nm 力矩预算） |
+| 夹爪开合速度上限（mm/s） | `follow.yaml` | `gripper.speed` | `100.0` |
+| 夹爪开合方向反了 | `follow.yaml` | `gripper.mount = "reverse"` | 未设（`normal`） |
+| 换了夹爪电机、CAN ID 变了 | `follow.yaml` | `gripper.can_id` | `"0x08"` |
+| 上电夹爪自己闭合 | `follow.yaml` | `gripper.no_startup_open` | `false` |
+| 夹爪过温保护 | `follow.yaml` | `gripper.temp_limit` | `80`（℃） |
+| 手停下时机械臂抖 | `teleop.yaml` | `tuning.deadband_scale` | `0.1`（`1.0` = 用原始阈值；`0.0` = 关掉死区，噪声会原样放行，别关） |
+| 跟手太飘 / 太钝 | `teleop.yaml` | `tuning.smooth_alpha` | `0.2`（`1.0` 最跟手也最抖，`0.5` 更跟手；**不能写 0**） |
+| 末端抓取点高度变了 | `teleop.yaml` | `tuning.tcp_offset` | `[0.0, 0.0, 0.18]`（米，标定值） |
+| 快挥时关节跳变 | `teleop.yaml` | `sim.max_step_rad` | `0.2`（rad/帧） |
+| 换 IK 后端 | `teleop.yaml` | `tuning.ik` | `pybullet`（另有 `pin` / `exact`） |
+| 手柄方向不对 | `teleop.yaml` | `mapping.*` | 标定值，别凭手感改 |
+
+> 两份 yaml 的全部键（包括 `tuning.notch` / `twist_accel`、`pin_ik`、`aggregator` 等）
+> 见随交付的《LiteArm VR Bridge 参数对照表》（`litearm-vr-bridge-config.md`）。
+> 表里标「标定值」的段落是对着真机量出来的，换机器 / 换夹爪要重新标定。
 
 ---
 
@@ -239,7 +310,7 @@ cd "${BRIDGE_INSTALL}" && ./scripts/up.sh --doctor
 | 顺序 | 位置 |
 | --- | --- |
 | 1 | `--config PATH`（命令行显式指定） |
-| 2 | `${XDG_CONFIG_HOME:-$HOME/.config}/litearm-vr-bridge/config.toml` |
+| 2 | `~/.config/litearm-vr-bridge/config.toml` |
 | 3 | `/etc/litearm-vr-bridge.toml` |
 
 三处都没有 = 全部使用出厂默认，桥仍可启动（合法状态）。
@@ -247,12 +318,12 @@ cd "${BRIDGE_INSTALL}" && ./scripts/up.sh --doctor
 上位机「链路配置」页面改的项写入：
 
 ```bash
-"${XDG_CONFIG_HOME:-${HOME}/.config}/litearm-vr-bridge/overrides.json"
+~/.config/litearm-vr-bridge/overrides.json
 ```
 
 优先级：**`overrides.json` > `config.toml` > 出厂默认**。
 
-> ⚠ TOML 文件**不会展开** `$HOME` 之类的环境变量。本文里的 `${...}` 只用于 shell 命令；
+> ⚠ TOML 文件**不会展开** `$HOME` 之类的环境变量。
 > 写进 `config.toml` 的路径必须是实际路径（例如 `/dev/serial/by-id/...`）。
 
 ### 5.2 生效方式
@@ -277,7 +348,7 @@ cd "${BRIDGE_INSTALL}" && ./scripts/up.sh --doctor
 | `gripper_remote` | text：`host:9003` | 空 | respec | 是 | 夹爪服务地址（`gripper = true` 时） |
 | `upright` | bool | `false` | respec | 是 | 双臂正装；仅 `arms = "dual"` 有效 |
 | `arms` | enum：`single` / `dual` | `single` | restart | 是 | 机械臂构型；重启桥后生效 |
-| `server_py` | text | 空 = 自动找 | 重启桥 | 否（锁定） | 上游 teleop 服务端解释器（metavr-arm 环境的 python） |
+| `server_py` | text | 空 = 自动找 | 重启桥 | 否（锁定） | 上游 teleop 服务端解释器；包内已带冻结版 teleop，正常留空 |
 
 > 当前单臂夹爪使用 `[arms.A].grip = "can0@127.0.0.1:9003"`。
 > `machine.gripper` / `gripper_remote` 是上游级开关，通常**不要**和 `[arms.A].grip` 重复配。
@@ -294,6 +365,8 @@ cd "${BRIDGE_INSTALL}" && ./scripts/up.sh --doctor
 ### 5.5 `[arms.A]` / `[arms.B]` —— 每条臂的口
 
 单臂只写 `[arms.A]`；双臂时 A = 左（左手柄）、B = 右（右手柄）。
+`[arms.A]` 的默认槽位是 **left（侧装）**；单臂**正装**要同时写明 `side = false`，臂才占 right 槽
+（`preset.sh` 的预设就是这么写的）。槽位配反了不报错，表现是"哪只手柄在控哪条臂"反了。
 
 | 键 | 类型 / 取值 | 默认 | 生效 | 页面可改 | 说明 |
 | --- | --- | --- | --- | --- | --- |
@@ -336,21 +409,35 @@ grip = "can0@127.0.0.1:9003"
 | 键 | 类型 / 取值 | 默认 | 生效 | 页面可改 | 说明 |
 | --- | --- | --- | --- | --- | --- |
 | `manage` | bool 或列表 | `true` | restart | 是 | `true` / `false`，或点名列表如 `["teleop", "follow", "gripper", "status"]` |
-| `teleop_repo` | text | 未设置 = 用仓库内 submodule | 重启桥 | 否（锁定） | 上游 teleop 路径 |
-| `follow_repo` | text | 未设置 = 用仓库内 submodule | 重启桥 | 否（锁定） | 上游 follow 路径 |
+| `teleop_repo` | text | 未设置 = 用包内那份 | 重启桥 | 否（锁定） | 上游 teleop 路径；包内已带（submodule 冻结） |
+| `follow_repo` | text | 未设置 = 用包内那份 | 重启桥 | 否（锁定） | 上游 follow 路径；包内已带（submodule 冻结） |
 | `teleop_frozen` | text | 未设置 = 包内有冻结产物就用 | 重启桥 | 否（锁定） | 冻结版 teleop 可执行文件；写了空字符串 = 强制不用 |
 
-### 5.9 `[upstream.env]` —— 给受管子进程的环境变量
+### 5.9 `[upstream.env]` —— 给受管子进程的环境变量（正常不用写）
 
-这一段是**唯一**会真的变成环境变量的地方，键名任意、值必须是字符串：
+装包时这些变量已经写进 systemd 单元，日常用不到这一段：
+
+```bash
+grep '^Environment=' ~/.config/systemd/user/litearm-vr-bridge.service
+# Environment=PYTHONPATH=/opt/litearm/litearm-vr-bridge/src:/opt/litearm/litearm-vr-bridge/vendor:/opt/litearm/litearm-vr-bridge/vendor-upstream
+# Environment=LITEGRIP_SDK=/opt/litearm/litearm-vr-bridge/sdk/litegrip-python/src
+# Environment=LITEARM_PY_SRC=/opt/litearm/litearm-vr-bridge/sdk/litearm-python/src
+```
+
+只有下面这几种情况才需要自己写（键名任意、值必须是字符串）。换 `follow.yaml` / `teleop.yaml`
+的完整做法见 4.5：
 
 ```toml
 [upstream.env]
-LITEARM_PY_SRC = "/opt/litearm/follow"     # follow 的 run_stm32_server.sh 读
-LITEGRIP_SDK = "/opt/litearm/litegrip/src" # 夹爪服务读
-CMEEL_SITE = "/opt/cmeel"                  # sdk 模式读
-TELEOP_PYTHONPATH = "/opt/extra"           # 额外 import 路径
-# GRIPPER_SERVER_CMD = "..."               # 自定义夹爪服务命令
+# 换上游那两份 yaml（**只写绝对路径**；包内那两份不用动，改包内的会被升级冲掉）
+# FOLLOW_CONFIG = "/home/me/litearm-config/follow.yaml"
+# TELEOP_CONFIG = "/home/me/litearm-config/teleop.yaml"
+# 自己换了一份源码检出 / SDK，或要指定 teleop 的解释器
+# LITEARM_PY_SRC = "/opt/litearm/follow"
+# LITEGRIP_SDK = "/opt/litearm/litegrip/src"
+# TELEOP_SERVER_PY = "/home/me/miniconda3/envs/metavr-arm/bin/python"
+# 自定义受管命令
+# GRIPPER_SERVER_CMD = "..."
 ```
 
 > 这一段**页面锁定**，只能写进 `config.toml`，上位机「链路配置」不提供修改。
@@ -371,24 +458,25 @@ TELEOP_PYTHONPATH = "/opt/extra"           # 额外 import 路径
 ## 6. 看状态 / 日志 / 重启
 
 ```bash
-# 服务状态
+# 服务状态 / 重启 / 停止
 systemctl --user status litearm-vr-bridge
+systemctl --user restart litearm-vr-bridge
+systemctl --user stop litearm-vr-bridge
 
-# 链路摘要：头显帧率、臂设备、follow、兜底状态
-cd "${BRIDGE_INSTALL}" && ./scripts/up.sh --status
-
-# 实时日志
-journalctl --user -u litearm-vr-bridge -f
+# 实时日志（最近 50 行 + 跟随）
+journalctl --user -u litearm-vr-bridge -n 50 -f
 
 # 各进程日志
-ls "${BRIDGE_STATE_DIR}/logs/"
-tail -f "${BRIDGE_STATE_DIR}/logs/teleop.log"
-tail -f "${BRIDGE_STATE_DIR}/logs/follow_server_armA.log"
-tail -f "${BRIDGE_STATE_DIR}/logs/gripper_server_armA.log"
-
-# 重启桥
-systemctl --user restart litearm-vr-bridge
+ls ~/.local/state/litearm-vr-bridge/logs/
+tail -f ~/.local/state/litearm-vr-bridge/logs/teleop.log
+tail -f ~/.local/state/litearm-vr-bridge/logs/follow_server_armA.log
+tail -f ~/.local/state/litearm-vr-bridge/logs/gripper_server_armA.log
 ```
+
+链路摘要（头显帧率、臂设备、follow、兜底状态）在 VR 页面上看；页面打不开时，
+就用 `journalctl` 看桥自己的输出。
+
+> 装成**系统级**服务（无人值守的机器）时，上面这些命令去掉 `--user`，日志改看 `journalctl -u litearm-vr-bridge`。
 
 ---
 
@@ -396,14 +484,15 @@ systemctl --user restart litearm-vr-bridge
 
 | 现象 | 处理 |
 | --- | --- |
-| 「开始遥操」是灰的 | 头显没上线，或桥不在线；先看页面「VR 链路」与 `up.sh --status` |
+| 「开始遥操」是灰的 | 头显没上线，或桥不在线；先看页面「VR 链路」与 `systemctl --user status litearm-vr-bridge` |
 | 头显连不上 `ws://<IP>:8765` | 确认头显与本机同网段；`ss -ltnp \| grep 8765`；检查本机 IP 是否变了 |
 | 页面显示「跟随服务报错: Connection refused」 | 还没点「开始遥操」时属正常；开始后 follow 才会监听 9001 |
 | teleop 意外退出 / 页面显示“兜底持位” | 再点「开始遥操」；反复退出看 `teleop.log`（常见：手动关掉了 teleop 的 pybullet 窗口） |
-| 夹爪不动 | `ip -br link \| grep can0`；看 `gripper_server_armA.log`；确认配置里有 `grip = "can0@..."` |
+| 夹爪不动 | `ip -br link \| grep can0`；看 `gripper_server_armA.log`；确认配置里有 `grip = "can0@..."`；`dkms status` 里 `litearm-can` 应为 `installed` |
 | `ls /dev/serial/by-id/` 为空 | 臂没有插好/被拔掉，或 USB 线/供电问题；重新插拔后再看 |
-| 串口被占用、follow 起不来 | `cd "${BRIDGE_INSTALL}" && ./scripts/up.sh --doctor`，它会指出占用者 |
+| 串口被占用、follow 起不来 | `sudo fuser -v /dev/ttyACM*` 看谁占着；也可能是上位机守护进程抢了串口（见 §1）；桥这边的说法在 `journalctl --user -u litearm-vr-bridge -n 100` |
 | 改了 `config.toml` 却不生效 | 看 `overrides.json` 是否压过了它（见 4.3） |
+| 服务没起来 / 装完没有任何单元 | `systemctl --user status litearm-vr-bridge`；没有这个单元说明 `postinst` 没装成：用自己的账号跑一次安装包里的 `scripts/install.sh`（装包时它打印的就是这条命令），或重装 deb |
 
 ---
 
@@ -411,5 +500,5 @@ systemctl --user restart litearm-vr-bridge
 
 - 首次按 grip 会 **`movej` 回零位**，确认工作区无人、急停在手。
 - 页面上的 **急停** 会向 follow 下发 stop。
-- 真机模式（`real = true`）下，「开始遥操」会真的驱动机械臂；调试界面先用 `"${VR_STUDIO}" --fake`。
+- 真机模式（`real = true`）下，「开始遥操」会真的驱动机械臂；调试界面先用 `litearm-studio --fake`。
 - 松开 grip 只是暂停跟随，不是断电；需要保持时让机械臂自己持位。
