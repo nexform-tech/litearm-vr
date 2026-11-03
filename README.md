@@ -24,17 +24,18 @@ Applies to: the on-machine VR teleoperation environment. The current machine is 
 
 ## Download and install
 
-Delivery is one directory: the **bridge deb** (its `Depends` carries the CAN driver `litearm-can-dkms`, shipped alongside it), plus the **host application** `litearm-studio` deb. See the [Releases](https://github.com/nexform-tech/litearm-vr/releases) page.
+Delivery is one directory: the **bundle deb** (the bridge and the CAN driver `litearm-can-dkms` in one package), plus the **host application** `litearm-studio` deb. See the [Releases](https://github.com/nexform-tech/litearm-vr/releases) page.
 
 ```bash
-sudo apt install ./litearm-vr-bridge_0.1.2_amd64.deb ./litearm-can-dkms_0.1.2_all.deb
+sudo apt install ./litearm-vr-bundle_0.2.1_amd64.deb
 ```
 
+- The bundle is built from the **lite-vr main repository** (bridge + teleop + follow). Teleop still runs from the `metavr-arm` conda environment — see the [lite-vr quick start](https://github.com/nexform-tech/lite-vr/blob/main/QUICKSTART.md).
 - Needs network access for `dkms` and matching kernel headers (`linux-headers-$(uname -r)`). **No git, no source checkout required.**
 - With Secure Boot enabled the system refuses the unsigned CAN driver; disable it or sign the module.
 - `postinst` configures the DKMS module and installs the bridge as a **user-level** systemd service for the user who ran the install, then starts it.
   When it cannot tell which user that is (nobody logged in, no terminal `sudo`) it does not guess — it prints the one command to run as yourself:
-  `/opt/litearm/litearm-vr-bridge/scripts/install.sh`.
+  `/opt/litearm/litearm-vr-bridge/scripts/install.sh --user`.
 - Upgrade: the same command; the bridge restarts itself and an existing `config.toml` is **not** overwritten.
 
 The host application (the UI) is a separate package — install it from [the litearm-studio releases](https://github.com/nexform-tech/litearm-studio/releases):
