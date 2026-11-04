@@ -27,10 +27,10 @@
 安装：**一体化 bundle deb**（桥 + CAN 驱动 `litearm-can-dkms`），外加**VR专用上位机** `litearm-studio` 的 deb。发布页见 [Releases](https://github.com/nexform-tech/litearm-vr/releases)。
 
 ```bash
-sudo apt install ./litearm-vr-bundle_0.2.1_amd64.deb
+sudo apt install ./litearm-vr-bundle_0.2.2_amd64.deb
 ```
 
-- bundle 由 **lite-vr 主仓**构建（bridge + teleop + follow）。teleop 仍需要 `metavr-arm` conda 环境，见 [lite-vr 快速上手](https://github.com/nexform-tech/lite-vr/blob/main/QUICKSTART_zh.md)。
+- bundle 由 **lite-vr 主仓**构建（bridge + teleop + follow），并内置**冻结版 teleop**：自带 Python 与依赖，目标机不需要 conda 或 `metavr-arm` 环境。
 - 需要联网装 `dkms` 与匹配的内核头文件（`linux-headers-$(uname -r)`）。**不需要 git，不需要拉代码。**
 - Secure Boot 开着时系统会拒绝未签名的 CAN 驱动，需要关掉或给模块签名。
 - `postinst` 会配置 DKMS 模块，并把桥装成**装它的那个用户**的用户级 systemd 服务、随即启动。

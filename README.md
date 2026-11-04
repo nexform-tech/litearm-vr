@@ -27,10 +27,10 @@ Applies to: the on-machine VR teleoperation environment. The current machine is 
 Delivery is one directory: the **bundle deb** (the bridge and the CAN driver `litearm-can-dkms` in one package), plus the **host application** `litearm-studio` deb. See the [Releases](https://github.com/nexform-tech/litearm-vr/releases) page.
 
 ```bash
-sudo apt install ./litearm-vr-bundle_0.2.1_amd64.deb
+sudo apt install ./litearm-vr-bundle_0.2.2_amd64.deb
 ```
 
-- The bundle is built from the **lite-vr main repository** (bridge + teleop + follow). Teleop still runs from the `metavr-arm` conda environment — see the [lite-vr quick start](https://github.com/nexform-tech/lite-vr/blob/main/QUICKSTART.md).
+- The bundle is built from the **lite-vr main repository** (bridge + teleop + follow) and ships a **frozen teleop**: it carries its own Python and dependencies, so the target machine does not need conda or the `metavr-arm` environment.
 - Needs network access for `dkms` and matching kernel headers (`linux-headers-$(uname -r)`). **No git, no source checkout required.**
 - With Secure Boot enabled the system refuses the unsigned CAN driver; disable it or sign the module.
 - `postinst` configures the DKMS module and installs the bridge as a **user-level** systemd service for the user who ran the install, then starts it.
