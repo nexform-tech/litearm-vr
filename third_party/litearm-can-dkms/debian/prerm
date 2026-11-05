@@ -1,0 +1,14 @@
+#!/bin/sh
+set -e
+NAME=litearm-can
+VER="@VERSION@"
+case "$1" in
+remove|upgrade|deconfigure)
+    if command -v dkms >/dev/null 2>&1; then
+        dkms remove -m "$NAME" -v "$VER" --all 2>/dev/null || true
+    fi
+    # Back to the stock driver.
+    if modprobe -r gs_usb 2>/dev/null; then modprobe gs_usb || true; fi
+    ;;
+esac
+exit 0

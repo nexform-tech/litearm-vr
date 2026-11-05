@@ -1,0 +1,54 @@
+#!/bin/sh
+# Check that a CAN interface is really usable, not merely "UP".
+#
+# The failure we are guarding against is silent: with the wrong gs_usb for the
+# board's firmware, can0 shows UP and carries no frame at all (usb_submit_urb
+# returns -ENOENT).  Nothing in `ip link` reveals it.
+#
+# usage: litearm-can-selftest [iface]     exit 0 = ok, 1 = problem found
+iface="${1:-can0}"
+rc=0
+say()  { echo "litearm-can-selftest[$iface]: $*"; }
+fail() { say "FAIL: $*"; rc=1; }
+
+[ -d "/sys/class/net/$iface" ] || { fail "interface does not exist"; exit 1; }
+[ "$(cat /sys/class/net/$iface/operstate)" = up ] || fail "interface is not UP"
+
+# 1. Which gs_usb is loaded?  The one depmod would pick, or a stale/manual one?
+if [ -r /sys/module/gs_usb/srcversion ]; then
+    loaded="$(cat /sys/module/gs_usb/srcversion)"
+    ondisk="$(modinfo -F srcversion gs_usb 2>/dev/null)"
+    path="$(modinfo -n gs_usb 2>/dev/null)"
+    case "$path" in
+        */updates/*) origin="LiteArm patched (DKMS)" ;;
+        *)           origin="kernel built-in" ;;
+    esac
+    if [ -n "$ondisk" ] && [ "$loaded" != "$ondisk" ]; then
+        fail "loaded gs_usb ($loaded) is not the installed one ($ondisk, $origin): a manual insmod is still resident. Fix: modprobe -r gs_usb && modprobe gs_usb"
+    else
+        say "driver: $origin ($loaded)"
+    fi
+fi
+
+# 2. Endpoint sanity.  Only meaningful for the unpatched driver, which hard-codes
+#    EP1 IN (0x81) / EP2 OUT (0x02); the patched one scans the descriptor.
+parent="$(readlink -f /sys/class/net/$iface/device 2>/dev/null)"
+if [ -n "$parent" ] && [ "$origin" = "kernel built-in" ]; then
+    if [ ! -d "$parent/ep_81" ] || [ ! -d "$parent/ep_02" ]; then
+        eps="$(ls "$parent" | grep '^ep_' | tr '\n' ' ')"
+        fail "board endpoints ($eps) do not match the kernel's gs_usb (needs ep_81/ep_02): install litearm-can-dkms and check 'dkms status'"
+    fi
+fi
+
+# 3. The kernel's own complaint, if any.  Only look at what happened since the
+#    driver last bound to a board ("Configuring for"): the log also holds
+#    history from drivers that have since been replaced.
+if journalctl -k --no-pager -b 2>/dev/null | awk -v i="$iface" '
+        /gs_usb .*: Configuring for/ { bad = 0 }
+        /gs_usb .*usb_submit failed/ && index($0, i ":") { bad = 1 }
+        END { exit !bad }'; then
+    fail "kernel logged 'usb_submit failed' for $iface (frames are not leaving the host)"
+fi
+
+[ $rc -eq 0 ] && say "ok"
+exit $rc

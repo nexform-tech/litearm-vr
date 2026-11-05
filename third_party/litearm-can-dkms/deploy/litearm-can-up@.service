@@ -1,0 +1,16 @@
+# Bring up CAN interface %I and verify it really carries frames.
+#
+# Started by 60-litearm-can.rules when the interface appears.  Manual:
+#     systemctl start 'litearm-can-up@can0'
+#     systemctl status 'litearm-can-up@can0'
+[Unit]
+Description=LiteArm: bring up CAN interface %I and self-test it
+BindsTo=sys-subsystem-net-devices-%i.device
+After=sys-subsystem-net-devices-%i.device
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+# Optional override: LITEARM_CAN_BITRATE=500000
+EnvironmentFile=-/etc/default/litearm-can
+ExecStart=/usr/lib/litearm/litearm-can-up %I

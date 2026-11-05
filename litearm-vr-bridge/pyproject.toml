@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=77", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "litearm-vr-bridge"
+version = "0.1.0"
+description = "LiteArm VR bridge: headset ingress, zenoh transport, link status, dropout fallback and managed-process supervision"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "Apache-2.0"
+dependencies = [
+    # 13 起才有 websockets.asyncio.* / websockets.http11，本服务用的是这套 API。
+    # 头显那边只会 WebSocket（Godot 自带），所以它一直在。
+    "websockets>=13",
+    # 对外的两条边（帧 → teleop、状态/动作 → 上位机）都走 zenoh。
+    # 与 litearm-server 同一个包名与下限；那边实测 1.9.0，这边实测 1.10.1。
+    "eclipse-zenoh>=1.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=7"]
+
+[project.scripts]
+litearm-vr-bridge = "litearm_vr_bridge.__main__:main"
+
+[tool.setuptools]
+include-package-data = false
+
+[tool.setuptools.packages.find]
+where = ["src"]

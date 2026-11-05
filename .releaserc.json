@@ -1,0 +1,18 @@
+{
+  "branches": [
+    "main",
+    "master"
+  ],
+  "plugins": [
+    "@semantic-release/commit-analyzer",
+    [
+      "@semantic-release/release-notes-generator",
+      {
+        "writerOpts": {
+          "headerPartial": "# {{version}} ({{date}})\n\n## Install\n\nUbuntu / Debian:\n\n```bash\nsudo apt install ./litearm-vr-bundle_{{version}}_amd64.deb\n```\n\nOther glibc 2.35+ Linux (experimental):\n\n```bash\nsudo tar -C / -xzf litearm-vr-bundle_{{version}}_amd64.tar.gz\nsudo /usr/lib/litearm-vr-bundle/portable-install.sh\n```\n\nThe `.tar.gz` expects `python3`, `python3-venv`, `dkms`, `build-essential`, and matching kernel headers. Each artifact has a `.sha256` sidecar. See `MANIFEST.json` for the source commit and component pins.\n"
+        }
+      }
+    ],
+    "@semantic-release/github"
+  ]
+}

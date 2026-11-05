@@ -1,0 +1,47 @@
+<?xml version="1.0"?>
+<robot name="dual_litearm_column" xmlns:xacro="http://www.ros.org/wiki/xacro">
+
+  <!-- Include litearm macro -->
+  <xacro:include filename="litearm_macro.xacro"/>
+
+  <!-- Column base from side_mount_column_description -->
+  <link name="column_base_link">
+    <inertial>
+      <origin xyz="-1.04205818497635E-05 1.57131376342687E-09 -0.964687454497704" rpy="0 0 0"/>
+      <mass value="29.2470496627084"/>
+      <inertia
+        ixx="1.41919673183219"
+        ixy="8.93492624925241E-09"
+        ixz="0.000230277615794084"
+        iyy="1.04420337562241"
+        iyz="-1.54077510060802E-09"
+        izz="0.594546726532483"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://dual_litearm_column_description/meshes/column_base_link.STL"/>
+      </geometry>
+      <material name="column_material">
+        <color rgba="0.776 0.757 0.737 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://dual_litearm_column_description/meshes/column_base_link.STL"/>
+      </geometry>
+    </collision>
+  </link>
+
+  <!-- 左臂：(0, 0.055, 0)，单臂侧装姿态（base 绕 X 轴 −90°，rpy="-1.5708 0 0"） -->
+  <xacro:litearm prefix="left_" parent="column_base_link">
+    <origin xyz="0 0.055 0" rpy="-1.5708 0 0"/>
+  </xacro:litearm>
+
+  <!-- 右臂：(0, -0.055, 0)，左臂绕立柱竖轴 Z 转 180°（背靠背镜像，= Rz(180)∘Rx(-90)） -->
+  <xacro:litearm prefix="right_" parent="column_base_link">
+    <origin xyz="0 -0.055 0" rpy="-1.5708 0 3.1416"/>
+  </xacro:litearm>
+
+</robot>

@@ -1,0 +1,17 @@
+#!/bin/sh
+# Bring a CAN interface up at LITEARM_CAN_BITRATE (default 1 Mbit/s), then
+# self-test it.  Called by litearm-can-up@.service when udev sees the interface.
+iface="$1"
+[ -n "$iface" ] || { echo "usage: $0 <iface>" >&2; exit 2; }
+bitrate="${LITEARM_CAN_BITRATE:-1000000}"
+
+if [ "$(cat /sys/class/net/$iface/operstate 2>/dev/null)" != up ]; then
+    # Setting the bitrate fails on a UP interface, so only do it when down.
+    if ! ip link set "$iface" up type can bitrate "$bitrate"; then
+        echo "litearm-can-up: cannot bring $iface up at $bitrate bit/s." >&2
+        echo "litearm-can-up: with a built-in gs_usb this usually means the board reports a bad bit-timing range; check 'dkms status' for litearm-can." >&2
+        /usr/lib/litearm/litearm-can-selftest "$iface" >&2
+        exit 1
+    fi
+fi
+exec /usr/lib/litearm/litearm-can-selftest "$iface"

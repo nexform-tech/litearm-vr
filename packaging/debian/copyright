@@ -1,0 +1,23 @@
+Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
+Upstream-Name: litearm-vr-bundle
+Source: https://github.com/nexform-tech/litearm-vr
+
+Files: *
+Copyright: 2026 NexForm Robotics
+License: Apache-2.0
+ On Debian systems, the complete text of the Apache License 2.0 can be found in
+ /usr/share/common-licenses/Apache-2.0.
+
+Files: opt/litearm/litearm-vr-bridge/submodules/litearm-vr-teleop/teleop/models/*
+Copyright: 2026 NexForm Robotics
+License: BSD
+ The teleop model packages declare BSD in their package.xml. See that file
+ for the exact terms.
+
+Files: usr/src/litearm-can-*
+Copyright: 2013-2016 Geschwister Schneider Technologie-, Entwicklungs- und Vertriebs UG (Haftungsbeschränkt)
+           2016 Hubert Denkmair
+           2023 Pengutronix, Marc Kleine-Budde <kernel@pengutronix.de>
+License: GPL-2.0-only
+ On Debian systems, the complete text of the GNU General Public License
+ version 2 can be found in /usr/share/common-licenses/GPL-2.

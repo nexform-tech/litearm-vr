@@ -1,0 +1,23 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>dual_litearm_column_description</name>
+  <version>1.0.0</version>
+  <description>
+    URDF description for dual LiteArm robots mounted on a side-mounted column.
+    Two 7-DOF arms mounted back-to-back on opposite sides of the column (14 DOF total).
+  </description>
+
+  <maintainer email="todo@todo.com">TODO</maintainer>
+  <license>BSD</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <exec_depend>robot_state_publisher</exec_depend>
+  <exec_depend>joint_state_publisher</exec_depend>
+  <exec_depend>rviz2</exec_depend>
+  <exec_depend>xacro</exec_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

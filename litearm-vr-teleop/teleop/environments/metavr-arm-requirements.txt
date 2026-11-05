@@ -1,0 +1,15 @@
+# metavr-arm 环境 pip 依赖（唯一真源，setup.sh 读取）
+# 注：pybullet==3.2.7 是 numpy 2 时代构建（3.2.6 与 numpy 2.2 ABI 不兼容）
+numpy
+scipy
+pybullet==3.2.7
+websockets
+# VR 帧的数据源（出厂 --source zenoh：订阅中间层 litearm-vr-bridge 转发的帧流）。
+# 版本与桥/zenoh-router 那套对齐（1.10.x）：Rust 侧的协议结构跨版本不保证兼容。
+eclipse-zenoh>=1.10
+# pinocchio + pink 微分 IK（真 pink 库 PyPI 名为 pin-pink；`pink` 是无关的格式化工具）
+pin>=2.6.3
+pin-pink>=4.4.0
+qpsolvers>=4.3.1
+quadprog
+loop-rate-limiters

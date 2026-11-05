@@ -1,0 +1,17 @@
+# CAN 盒插上就把口带起来 —— LiteArm 的夹爪（DM4310）与灵巧手都走 SocketCAN。
+#
+# 为什么需要它：这条链路上**没有任何人会自动配 CAN**。
+#   * 桥明确不碰（它只"列候选口"，不开口）；
+#   * follow 的夹爪服务只在用法说明里让人手敲 `sudo ip link set ...`，自己不执行；
+#   * 我们的服务默认装成**用户级**，没有 root，自己起不来这条命令。
+# 而 CAN 没起来时，症状是"点了开始遥操、夹爪服务起不来"（夹爪服务建 LiteGrip 时就会
+# 开 SocketCAN，口不在直接抛 `CAN interface 'can0' not found`）——所以交给 udev：
+# **插上即 up**，谁都不用记得敲那条命令。
+#
+# 判据用 ARPHRD_CAN（type=280），不是名字前缀 —— `canberra0` 这类无关网卡会被前缀骗到
+# （与 src/litearm_vr_bridge/ports.py 里列候选口用的是同一条判据）。
+#
+# 比特率默认 1000000（DM4310 那套）；要改就在 /etc/default/litearm-can 里写
+#   LITEARM_CAN_BITRATE=500000
+# 然后重新插一次 CAN 盒（或 systemctl restart 'litearm-can-up@can0'）。
+ACTION=="add", SUBSYSTEM=="net", ATTR{type}=="280", TAG+="systemd", ENV{SYSTEMD_WANTS}+="litearm-can-up@%k.service"

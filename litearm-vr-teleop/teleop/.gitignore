@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.pytest_cache/
+
+# 环境与编辑器
+.venv/
+.vscode/
+.idea/
+
+# 运行产物
+logs/
+*.log
+demonstration_*/
+trajectories/*.csv
+ident_result/
+
+# 系统
+.DS_Store
+
+# 打包文件
+metavr.bundle

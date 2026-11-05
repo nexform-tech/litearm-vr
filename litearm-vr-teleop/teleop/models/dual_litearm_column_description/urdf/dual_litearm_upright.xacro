@@ -1,0 +1,30 @@
+<?xml version="1.0"?>
+<robot name="dual_litearm_upright" xmlns:xacro="http://www.ros.org/wiki/xacro">
+
+  <!-- Include litearm macro (复用与双臂侧装立柱同一套 arm 几何/网格) -->
+  <xacro:include filename="litearm_macro.xacro"/>
+
+  <!-- 无立柱：仅一个轻量共同根 Link（无 visual，带微小 inertial 以便
+       pybullet/pinocchio 加载）。两臂均为正装（mount rpy=0 0 0，base 轴
+       Z 竖直向上，与单臂正装 litearm.urdf 同朝向），沿 ±y 分开摆放。 -->
+  <link name="world">
+    <inertial>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <mass value="0.001"/>
+      <inertia ixx="1e-9" ixy="0" ixz="0" iyy="1e-9" iyz="0" izz="1e-9"/>
+    </inertial>
+  </link>
+
+  <!-- 左臂：(0, +0.25, 0)，正装（rpy="0 0 0"） -->
+  <xacro:litearm prefix="left_" parent="world">
+    <origin xyz="0 0.25 0" rpy="0 0 0"/>
+  </xacro:litearm>
+
+  <!-- 右臂：(0, -0.25, 0)，正装但绕立柱竖轴 Z 转 180°（背靠背镜像，
+       = Rz(180)∘Rx(0)；与双臂侧装右臂的 Rz(180) 分量同款）。这样左臂 home
+       SINGLE_Q_HOME、右臂 home SINGLE_Q_HOME×MIRROR_SIGNS 即构成精确镜像。 -->
+  <xacro:litearm prefix="right_" parent="world">
+    <origin xyz="0 -0.25 0" rpy="0 0 3.1416"/>
+  </xacro:litearm>
+
+</robot>
