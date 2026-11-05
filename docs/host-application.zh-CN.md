@@ -1,6 +1,6 @@
-# LiteArm VR 上位机操作说明
+[English](host-application.md) | 简体中文
 
-[English](README.md) | [简体中文](README.zh-CN.md)
+# LiteArm VR 上位机操作说明
 
 适用：本机 VR 遥操环境，当前机型为 **正装单臂 + 夹爪**（`arms = "single"`、`side = false`、`grip = "can0@127.0.0.1:9003"`）。
 

@@ -1,6 +1,6 @@
-# LiteArm VR Host Application Guide
+English | [简体中文](host-application.zh-CN.md)
 
-[English](README.md) | [简体中文](README.zh-CN.md)
+# LiteArm VR Host Application Guide
 
 Applies to: the on-machine VR teleoperation environment. The current machine is an **upright single arm + gripper** (`arms = "single"`, `side = false`, `grip = "can0@127.0.0.1:9003"`).
 
