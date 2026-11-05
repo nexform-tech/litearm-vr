@@ -1,7 +1,7 @@
 [English](README.md) | 简体中文
 
-面向 **LiteArm V4 七轴机械臂**的实时 VR 遥操，可选配夹爪与 L6 灵巧手。戴上 **Quest 3**
-头显，手柄怎么动，机械臂就怎么跟。
+面向 **LiteArm V4 七轴机械臂**的实时 VR 遥操，可选配夹爪与 L6 灵巧手。戴上 **VR 头显**，
+手柄怎么动，机械臂就怎么跟。
 
 # LiteArm VR 遥操系统（litearm-vr）
 
@@ -15,7 +15,7 @@
 | 项目 | 要求 |
 | --- | --- |
 | 电脑 | Ubuntu 20.04 / 22.04，x86_64，带图形桌面，Python 3 |
-| 头显 | Quest 3，运行 LiteArm VR 客户端（闭源，单独分发），与电脑在同一局域网 |
+| 头显 | 受支持的 OpenXR VR 头显，运行 LiteArm VR 客户端（闭源，单独分发），与电脑在同一局域网 |
 | 遥操环境 | [conda](https://docs.conda.io/)：遥操服务跑在独立的 `metavr-arm` 环境里 |
 | 机械臂（可选） | LiteArm V4 七轴臂；可选夹爪、L6 灵巧手 |
 | 接口（仅真机） | STM32 路线用 USB 串口（`/dev/ttyACM*`）；或 SocketCAN 适配器（`can0`）。经典 CAN，1 Mbps |
@@ -30,7 +30,7 @@
 ## 工作方式
 
 ```
-Quest 3 头显（手柄位姿，约 72 Hz）
+VR 头显（手柄位姿，约 72 Hz）
         │  WebSocket  ws://<PC-IP>:8765
         ▼
 litearm-vr-bridge      收帧并转发，汇总链路状态                                    （可选）

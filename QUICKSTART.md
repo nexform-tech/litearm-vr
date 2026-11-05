@@ -22,8 +22,8 @@ on real hardware.
 
 **Headset**
 
-- Quest 3 with the LiteArm VR client (closed-source; distributed separately), on the
-  same Wi-Fi / LAN as the computer.
+- A supported OpenXR VR headset with the LiteArm VR client (closed-source;
+  distributed separately), on the same Wi-Fi / LAN as the computer.
 
 **Real robot (optional)**
 
@@ -74,7 +74,7 @@ If conda is not on `PATH`, either activate it or pass `CONDA_ROOT=/path/to/conda
 litearm-vr-teleop/teleop/launch/run_teleop_webxr.py
 ```
 
-- Connect the Quest 3 client to `ws://<PC-IP>:8765`.
+- Connect the VR headset client to `ws://<PC-IP>:8765`.
 - Defaults: single arm, upright mount, pybullet IK, pybullet preview window, **no hardware**.
 - Controls: hold `gripActive` to engage / anchor, release to pause; `trigger` edge toggles
   gripper close/open.
