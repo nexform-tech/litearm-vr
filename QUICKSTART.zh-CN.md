@@ -20,7 +20,7 @@
 
 **头显**
 
-- Quest 3，运行 LiteArm VR 客户端（闭源，单独分发），与电脑在同一 Wi-Fi / 局域网。
+- 受支持的 OpenXR VR 头显，运行 LiteArm VR 客户端（闭源，单独分发），与电脑在同一 Wi-Fi / 局域网。
 
 **真机（可选）**
 
@@ -69,7 +69,7 @@ conda 不在 `PATH` 时，先激活它，或给 `setup.sh` 传 `CONDA_ROOT=/path
 litearm-vr-teleop/teleop/launch/run_teleop_webxr.py
 ```
 
-- Quest 3 客户端连 `ws://<PC-IP>:8765`。
+- VR 头显客户端连 `ws://<PC-IP>:8765`。
 - 默认：单臂正装、pybullet 逆解、pybullet 预览窗口，**不接真机**。
 - 操作：按住 `gripActive` 启动 / 锚定，松开暂停；`trigger` 边沿切换夹爪开合。
 - 停止：`Ctrl-C`，或在 `litearm-vr-teleop/teleop` 下 `make stop`。

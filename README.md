@@ -1,7 +1,7 @@
 English | [简体中文](README.zh-CN.md)
 
 Real-time VR teleoperation for the **LiteArm V4 7-DoF arm**, with optional gripper
-and L6 dexterous hand. You move your hands in a **Quest 3** headset; the arm follows.
+and L6 dexterous hand. You move your hands in a **VR headset**; the arm follows.
 
 # LiteArm VR Teleoperation (litearm-vr)
 
@@ -16,7 +16,7 @@ run either a pure simulation or a real robot from the same tree.
 | Item | Requirement |
 | --- | --- |
 | PC | Ubuntu 20.04 / 22.04, x86_64, graphical desktop, Python 3 |
-| Headset | Quest 3 running the LiteArm VR client (closed-source; distributed separately), on the same LAN as the PC |
+| Headset | A supported OpenXR VR headset running the LiteArm VR client (closed-source; distributed separately), on the same LAN as the PC |
 | Teleop environment | [conda](https://docs.conda.io/) — the teleop service runs in its own `metavr-arm` environment |
 | Robot *(optional)* | LiteArm V4 7-DoF arm; optional gripper and L6 dexterous hand |
 | Interfaces *(real robot only)* | USB serial (`/dev/ttyACM*`) for the STM32 path, **or** a SocketCAN adapter (`can0`); classic CAN at 1 Mbps |
@@ -31,7 +31,7 @@ PC and a headset — or no headset at all, using the bundled fake frame source.
 ## How it works
 
 ```
-Quest 3 headset (controller poses, ~72 Hz)
+VR headset (controller poses, ~72 Hz)
         │  WebSocket  ws://<PC-IP>:8765
         ▼
 litearm-vr-bridge      receives frames, relays them, reports link status            (optional)
