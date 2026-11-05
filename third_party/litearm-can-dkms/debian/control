@@ -1,0 +1,15 @@
+Package: litearm-can-dkms
+Version: @VERSION@
+Section: kernel
+Priority: optional
+Architecture: all
+Maintainer: LiteArm Team <support@litearm.com>
+Depends: dkms, build-essential
+Recommends: linux-headers-generic | linux-headers-realtime
+Replaces: litearm-vr-bridge
+Description: LiteArm CAN: gs_usb driver that fits the STM32 arm board, auto bring-up
+ DKMS build of gs_usb for the LiteArm STM32 composite board (arm CDC + CAN).
+ Reads the bulk endpoints from the interface descriptor (firmware versions
+ differ) and repairs an inconsistent bit-timing range, so can0 carries frames on
+ any firmware.  Also installs a udev rule that brings CAN interfaces up at 1 Mbit/s
+ and a self-test (litearm-can-selftest) that detects a "UP but silent" interface.

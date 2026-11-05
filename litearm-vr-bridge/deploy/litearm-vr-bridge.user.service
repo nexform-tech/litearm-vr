@@ -1,0 +1,41 @@
+# litearm-vr-bridge 用户级 systemd 单元（systemctl --user）
+#
+# 装法（install.sh --user 会做同样的事，并把路径换成真实路径）：
+#   mkdir -p ~/.config/systemd/user ~/.config/litearm-vr-bridge
+#   cp deploy/litearm-vr-bridge.user.service ~/.config/systemd/user/litearm-vr-bridge.service
+#   cp deploy/bridge.env.example ~/.config/litearm-vr-bridge/env   # 按需修改
+#   systemctl --user daemon-reload && systemctl --user enable --now litearm-vr-bridge
+#   sudo loginctl enable-linger "$USER"      # 不开机自启、不随注销退出就可以不做
+#
+# 为什么值得用用户级：teleop 的 pybullet 窗口（TELEOP_VIEWER=gui）需要在图形会话里，
+# 用户级服务直接继承你的 DISPLAY/XAUTHORITY；系统服务要额外授权，还得小心 xauth。
+# 如果图形会话里 DISPLAY 没被 systemd 用户管理器继承，补一句：
+#   systemctl --user import-environment DISPLAY XAUTHORITY
+
+[Unit]
+Description=LiteArm VR bridge (VR 遥操链路垫片: 收帧→teleop, 状态汇总, 掉线兜底)
+Documentation=file:/opt/litearm/litearm-vr-bridge/docs/DESIGN.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/litearm/litearm-vr-bridge
+Environment=PYTHONPATH=/opt/litearm/litearm-vr-bridge/src
+EnvironmentFile=-%h/.config/litearm-vr-bridge/env
+ExecStart=/usr/bin/env python3 -m litearm_vr_bridge
+
+# 崩溃自动重启（M3 验收）
+Restart=always
+RestartSec=2
+
+# 与系统单元同理：只向主进程发 SIGTERM，让它自己先 latch 再收子进程。
+KillMode=mixed
+TimeoutStopSec=30
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=litearm-vr-bridge
+
+[Install]
+WantedBy=default.target

@@ -1,0 +1,48 @@
+# Zenoh router for the browser（上位机进 zenoh 网络的唯一入口）
+#
+# 谁需要它：**上位机**。浏览器只能走 WebSocket，说不了原生 zenoh，所以它得经
+# `zenoh-bridge-remote-api`（zenohd + remote-api 插件静态链接成一个文件）进来。
+# teleop 与 `ctl` **不需要**它 —— 它们是原生客户端，直连桥的监听端点。
+#
+# 与桥同机部署（桥跑在哪台，它就跑在哪台）。
+#
+# 装法（Eclipse 官方 standalone 包，免 root、版本天然配对）：
+#
+#   V=1.10.1
+#   curl -LO https://download.eclipse.org/zenoh/zenoh-plugin-remote-api/latest/$V/\
+#   zenoh-ts-$V-x86_64-unknown-linux-gnu-standalone.zip
+#   # 同目录有 sha256sums.txt，先核对再解包
+#   sudo mkdir -p /opt/zenoh-ts && sudo unzip -o zenoh-ts-$V-*.zip -d /opt/zenoh-ts
+#   sudo cp deploy/zenoh-router.service /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable --now zenoh-router
+#
+# ⚠ 为什么不用 apt 装 `zenohd` + `zenoh-plugin-remote-api`：官方文档明确警告两者
+#   共享 Rust 结构体、而 Rust 没有稳定 ABI，版本或特性集不一致会 **SIGSEGV**。
+#   standalone 包把两者静态链接在一起，配对问题结构性地不存在。
+#
+# ⚠ `--ws-port` 是浏览器唯一的入口，机械臂那台机器要**放行这个端口**。
+#   （头显连的 8765 是另一个口，别搞混。）
+
+[Unit]
+Description=Zenoh router for litearm-studio (VR 遥操上位机入口)
+Documentation=https://github.com/eclipse-zenoh/zenoh-ts
+# 要桥先起来 —— 它连的是桥的 zenoh 监听端点
+After=network-online.target litearm-vr-bridge.service
+Wants=network-online.target
+PartOf=litearm-vr-bridge.service
+
+[Service]
+Type=simple
+# peer 模式（默认）+ 连到桥。桥自己 listen 在 7447，所以这里**不 listen** ——
+# 两个都听同一个端口会撞。要不要给别的机器留入口，用下面的 --listen 自行决定。
+#
+# ⚠ 桥若改了 ZENOH_LISTEN_ENDPOINTS，这里跟着改。
+ExecStart=/opt/zenoh-ts/zenoh-bridge-remote-api \
+    --connect tcp/127.0.0.1:7447 \
+    --ws-port 10000 \
+    --no-multicast-scouting
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

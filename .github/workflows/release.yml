@@ -1,0 +1,55 @@
+# Release caller plus the bundle build.
+#
+# The central NexForm workflow owns versioning, the tag, and the GitHub
+# release. This repository only builds the bundle and attaches the artifacts.
+# The bundle is built from the same commit the release points at, so the
+# release notes and MANIFEST.json describe the same source.
+name: Release
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    uses: nexform-tech/workflows/.github/workflows/release.yml@v1
+    # The product release line is 0.2.2. The bootstrap only applies when the
+    # repository has no release tag; the existing bootstrap tags must be
+    # removed before this value takes effect.
+    with:
+      initial-version: "0.2.2"
+
+  package:
+    needs: release
+    if: ${{ needs.release.outputs.new_tag != '' }}
+    runs-on: ubuntu-22.04
+    timeout-minutes: 45
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Build and attach the bundle
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.release.outputs.new_tag }}
+        run: |
+          set -euo pipefail
+          VERSION="${TAG#v}"
+          bash packaging/build-bundle.sh "$VERSION"
+          gh release upload "$TAG" "packaging/out/$VERSION"/* --clobber

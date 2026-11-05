@@ -30,7 +30,7 @@ Delivery is one directory: the **bundle deb** (the bridge and the CAN driver `li
 sudo apt install ./litearm-vr-bundle_0.2.2_amd64.deb
 ```
 
-- The bundle is built from the **lite-vr main repository** (bridge + teleop + follow) and ships a **frozen teleop**: it carries its own Python and dependencies, so the target machine does not need conda or the `metavr-arm` environment.
+- The bundle is built from the **litearm-vr main repository** (bridge + teleop + follow) and ships a **frozen teleop**: it carries its own Python and dependencies, so the target machine does not need conda or the `metavr-arm` environment.
 - Needs network access for `dkms` and matching kernel headers (`linux-headers-$(uname -r)`). **No git, no source checkout required.**
 - With Secure Boot enabled the system refuses the unsigned CAN driver; disable it or sign the module.
 - `postinst` configures the DKMS module and installs the bridge as a **user-level** systemd service for the user who ran the install, then starts it.

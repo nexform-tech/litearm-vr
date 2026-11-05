@@ -1,0 +1,57 @@
+# litearm-vr-bridge systemd 单元（DESIGN 第 3 节：与 teleop 同机常驻）
+#
+# 一键安装（推荐，会把下面的路径换成真实路径、建好 venv、生成 env 文件）：
+#   sudo ./scripts/install.sh                 # 系统服务
+#       ./scripts/install.sh --user           # 用户级服务（pybullet 窗口场景更合适）
+#
+# 手工安装：
+#   sudo cp deploy/litearm-vr-bridge.service /etc/systemd/system/
+#   sudo cp deploy/bridge.env.example /etc/litearm-vr-bridge.env   # 按需修改
+#   sudo systemctl daemon-reload && sudo systemctl enable --now litearm-vr-bridge
+#
+# 注意：本服务只做收帧/转发/汇总/兜底，不碰 CAN，也不驱动机械臂；
+#      但通过 process.start 拉起的 teleop / arm_follow_server 需要相应权限
+#      （can0 / 串口），所以这里的运行用户要能跑通上游脚本那套环境。
+#
+# ⚠ teleop 的 pybullet 窗口（TELEOP_VIEWER=gui）要在图形会话里才打得开，而系统服务
+#   默认没有 DISPLAY。install.sh 会把当前会话的 DISPLAY/XAUTHORITY 写进 drop-in；
+#   手工装的话自己加：
+#       sudo systemctl edit litearm-vr-bridge
+#       [Service]
+#       Environment=DISPLAY=:0
+#       Environment=XAUTHORITY=/home/<操作员>/.Xauthority
+#   更省事的办法是改用用户级服务（./scripts/install.sh --user），它天然继承图形会话。
+
+[Unit]
+Description=LiteArm VR bridge (VR 遥操链路垫片: 收帧→teleop, 状态汇总, 掉线兜底)
+Documentation=file:/opt/litearm/litearm-vr-bridge/docs/DESIGN.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# 下面两处路径按实际部署位置改
+WorkingDirectory=/opt/litearm/litearm-vr-bridge
+Environment=PYTHONPATH=/opt/litearm/litearm-vr-bridge/src
+EnvironmentFile=-/etc/litearm-vr-bridge.env
+ExecStart=/usr/bin/env python3 -m litearm_vr_bridge
+
+# 崩溃自动重启（M3 验收）
+Restart=always
+RestartSec=2
+
+# 停止时只向主进程发 SIGTERM，让它自己先 latch、再收子进程；
+# 默认的 control-group 会同时 SIGTERM 掉 teleop，抢在兜底动作前面。
+KillMode=mixed
+TimeoutStopSec=30
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=litearm-vr-bridge
+
+# 需要收紧隔离时再打开（托管上游进程可能要放宽）
+# ProtectSystem=full
+# ReadWritePaths=/var/log/litearm-vr-bridge
+
+[Install]
+WantedBy=multi-user.target

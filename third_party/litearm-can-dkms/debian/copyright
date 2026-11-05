@@ -1,0 +1,15 @@
+Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
+Upstream-Name: litearm-can-dkms
+Source: https://github.com/nexform-tech/lite-vr
+
+Files: *
+Copyright: 2013-2016 Geschwister Schneider Technologie-, Entwicklungs- und Vertriebs UG (Haftungsbeschränkt)
+           2016 Hubert Denkmair
+           2023 Pengutronix, Marc Kleine-Budde <kernel@pengutronix.de>
+License: GPL-2.0-only
+ This package is free software; you can redistribute it and/or modify it under
+ the terms of the GNU General Public License version 2 only, as published by
+ the Free Software Foundation.
+ .
+ On Debian systems, the complete text of the GNU General Public License
+ version 2 can be found in /usr/share/common-licenses/GPL-2.

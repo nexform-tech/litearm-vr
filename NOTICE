@@ -1,0 +1,7 @@
+LiteArm VR
+Copyright 2026 NexForm Robotics
+
+This product includes software developed at NexForm Robotics.
+
+It also includes the litearm-can-dkms driver under GPL-2.0-only. See
+third_party/litearm-can-dkms/LICENSE and THIRD_PARTY_NOTICES.md.

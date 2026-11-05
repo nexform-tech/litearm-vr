@@ -1,0 +1,128 @@
+# =============================================================================
+# litearm-vr-follow —— 全部可选项（出厂值）
+# =============================================================================
+#
+# 这份文件是 follow 各常驻服务的**总配置表**。每个 run_*.sh 启动时读它，把对应
+# 段落的键翻成命令行参数，再 exec 真正的服务脚本。于是日常只需：
+#
+#     改 follow.yaml  →  ./run_<某>_server.sh          # 不用再传形参
+#
+# 生效方式与优先级：
+#     FOLLOW_CONFIG=/path/to/other.yaml ./run_sdk_server.sh   换一份配置
+#     ./run_sdk_server.sh --tcp-port 9002                     命令行显式给的最优先
+#     即：**命令行 > follow.yaml > 服务脚本里的出厂常量**
+#   （把某个键删掉 = 回退到代码里的出厂常量，不会报错，只是少一个可调点。）
+#
+# 格式：只支持 YAML 的一个子集（映射、缩进嵌套、流式序列 [a, b, c]、# 注释）。
+# 不支持 `- item` 块序列、锚点/别名、多行标量。十六进制写引号字符串："0x08"。
+# 解析器见 follow_config.py（只用标准库，不依赖 PyYAML）。
+#
+# 段落 ↔ 脚本：
+#     arm_stm32  → run_stm32_server.sh        arm_sdk   → run_sdk_server.sh
+#     gripper    → run_gripper_server.sh      hand      → run_hand_server.sh
+#     aggregator → run_status_aggregator.sh   stm32_comm→ run_stm32_comm_test.sh
+#
+# ⚠ 真机会真实运动：臂/夹爪/手段落改错会让电机乱动。首次联调先保持
+#   arm_sdk.dry_run: true 或 arm_stm32.mode: j，并确认急停在手边。
+# =============================================================================
+
+
+# -----------------------------------------------------------------------------
+# 臂·STM32 直连版（run_stm32_server.sh）—— 控制律在固件，走串口
+# -----------------------------------------------------------------------------
+arm_stm32:
+  port: /dev/ttyACM0      # STM32 USB CDC 串口（也可写 /dev/serial/by-id/... 稳定路径）
+  mode: jf                # jf=固件内伺服环(推荐) | js | j=免调增益跟随 | mit
+  host: 0.0.0.0           # TCP 监听地址
+  tcp_port: 9001          # ⚠ 单臂遥操 metavr 只往 "right" 发 ⇒ 用 9002（或给 metavr --real-right）
+  kp: ~                   # 位置增益 K，7 个（jf/mit 共用）；~ = 用出厂值
+  kd: ~                   # 阻尼 B，7 个；~ = 用出厂值
+  sp: 0.5                 # move_j 速度倍率 0~1
+  q_min: ~                # 关节下限限幅，7 个
+  q_max: ~                # 关节上限限幅，7 个
+  max_speed: ~            # 速度限幅，7 个
+  max_accel: ~            # 加速度限幅，7 个
+
+
+# -----------------------------------------------------------------------------
+# 臂·SDK 版（run_sdk_server.sh）—— 控制律在主机，走 socketcan
+# -----------------------------------------------------------------------------
+arm_sdk:
+  config: ~               # ⚠ pylitearm 的 litearm.yaml 路径（缺省用随包默认）——不是本文件
+  iface: can0             # CAN 接口（STM32 gs_usb 桥 = can0）
+  dry_run: false          # true = 无硬件仿真（不连 CAN），验协议用
+  host: 0.0.0.0
+  tcp_port: 9001
+  kp: ~                   # 跟随刚度 K，7 个 (Nm/rad)；~ = 用出厂值
+  kd: ~                   # 跟随阻尼 B，7 个
+  speed_limit: ~          # 速度限幅，7 个 (rad/s)
+  accel_limit: ~          # 加速度限幅，7 个 (rad/s^2)
+  sp: 0.5                 # movej 速度倍率 0~1
+  engage_sec: 0.3         # 跟随接管软缓冲秒数
+
+
+# -----------------------------------------------------------------------------
+# 夹爪（run_gripper_server.sh）—— CAN 常驻服务，drive DM4310
+# -----------------------------------------------------------------------------
+gripper:
+  can: can0               # CAN 接口（需先 up：1Mbps classic）
+  can_id: "0x08"          # 夹爪电机 CAN ID（十六进制字符串）
+  mst_id: ~               # 主机/主站 ID；~ = 用 SDK 默认
+  mount: ~                # normal | reverse；~ = 用出厂默认
+  calib: ~                # 标定文件路径；~ = 用出厂默认
+  host: 0.0.0.0
+  port: 9003              # teleop --gripper-remote 要连着它
+  speed: 100.0            # 命令轨迹的推进速度上限 mm/s（开口量；≠MIT 帧的 dq，那恒为 0）
+  force: 20.0             # 闭合侧力矩预算 N（×0.1 = Nm）= 夹持力上限
+  rate_hz: 200.0          # 控制环周期 Hz（照 litegrip-cpp 的 control_rate_hz）
+  kp: 20.0                # 位置增益上限（实际会被预算按最坏情况压小）
+  kd: 0.5                 # 阻尼增益上限
+  max_pos_error_mm: 10.0  # 预算分配用的「最坏位置误差」：kp ≤ 预算/它。调小 = 更硬
+  max_fb_vel: 1.0         # 预算分配用的「最坏反馈速度」rad/s（决定 kd 上限）
+  feedback_timeout: 0.5   # 多久没新反馈帧算掉线 s → 改发零增益帧
+  temp_limit: 80          # MOS/线圈过温上限 ℃ → 安全停（零增益帧）
+  status_hz: 20.0         # **还没收到目标**（limp）时刷状态缓存频率 Hz
+  no_startup_disable: false  # true = 启动不先 disable（默认会 disable 再 open）
+  no_startup_open: false     # ⚠ true = 启动不 open 归位 ⇒ 一上电就闭合。别乱开
+
+
+# -----------------------------------------------------------------------------
+# 灵巧手 L6（run_hand_server.sh）—— CAN 常驻服务
+# -----------------------------------------------------------------------------
+hand:
+  can: can0               # CAN 接口（需先 up）
+  host: 0.0.0.0
+  port: 9004              # teleop --hand-remote 要连着它
+
+
+# -----------------------------------------------------------------------------
+# 状态汇总（run_status_aggregator.sh）—— 只读轮询各 follow 服务 → zenoh
+# -----------------------------------------------------------------------------
+# 只读：绝不发 start/q/movej/home/close/open，也绝不开串口/CAN。可与遥操并行跑。
+aggregator:
+  # 格式 ARM_ID=[IFACE@]HOST:PORT；多台就在列表里多写一项
+  arm: [armA=127.0.0.1:9001]
+  gripper: [armA=127.0.0.1:9003]
+  hand: []                # 灵巧手 v1 未做状态读取；留空即不订阅
+  prefix: litearm/v4      # topic 前缀：{prefix}/{arm_id}/vr_{arm,grip,hand}
+  arm_hz: 100.0           # 臂状态轮询频率
+  gripper_hz: 20.0        # 夹爪状态轮询频率
+  publish_hz: 100.0       # 发布频率
+  stale_ms: 1000.0        # 实测数据超过这个 ms 视为断链（connected=false）
+  connect_timeout_s: 2.0
+  request_timeout_s: 1.0
+  zenoh_mode: peer        # peer | client
+  zenoh_listen: ~         # 监听端点列表；~ = [tcp/0.0.0.0:<zenoh_listen_port>]
+  zenoh_listen_port: 17449
+  zenoh_connect: []       # 要连的 zenoh 端点列表
+  zenoh_scouting: false   # true = 启用 zenoh 自动发现
+  zenoh_config: ~         # zenoh 配置文件路径；~ = 用上面这些参数拼配置
+  quiet: false
+  verbose: false
+
+
+# -----------------------------------------------------------------------------
+# 串口通信自测（run_stm32_comm_test.sh）—— 主机 <-> STM32 点对点
+# -----------------------------------------------------------------------------
+stm32_comm:
+  port: ~                 # 串口；~ = 交给 SDK 自动发现 CDC 口
