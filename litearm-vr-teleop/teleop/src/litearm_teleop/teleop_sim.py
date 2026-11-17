@@ -1589,9 +1589,9 @@ class LiteArmTeleopSim:
         "pin" 用 pinocchio + pink（metavr 策略，见 pin_ik.py）；"exact" 精确任务速度。
 
         tcp_offset: 末端偏移量（米，本体系），操作者控制的工具点相对 tip link 的
-        偏移；None = 出厂默认 `DEFAULT_TCP_OFFSET`（本台架夹爪的抓取点），
-        `[0, 0, 0]` = 控制法兰。双臂两臂共用同一本体系偏移（两条链几何相同，
-        故镜像后世界系偏移也镜像）。
+        偏移；None = 出厂默认 `DEFAULT_TCP_OFFSET`（`[0, 0, 0]` = 直接控法兰）；
+        装夹爪/灵巧手时可设为如 `[0, 0, 0.18]` 延伸到抓取点。双臂两臂共用同一
+        本体系偏移（两条链几何相同，故镜像后世界系偏移也镜像）。
 
         sim_config: `SimConfig`。None = 出厂常量（频率/限幅/home/轴映射/容差/求解器
         参数都是原值，逐位与改动前相同）。
@@ -1866,7 +1866,8 @@ def main():
     ap.add_argument("--tcp-offset", type=float, nargs=3, default=argparse.SUPPRESS,
                     metavar=("X", "Y", "Z"),
                     help="末端偏移量(米，本体系)：操作者控制的工具点相对 tip link 的偏移，"
-                         "默认 %s = 本台架夹爪的抓取点；传 0 0 0 = 控制法兰"
+                         "默认 %s = 直接控制法兰；装夹爪/灵巧手时可传如 0 0 0.18 "
+                         "延伸到抓取点"
                          % " ".join(str(v) for v in DEFAULT_TCP_OFFSET))
     ap.add_argument("--deadband-scale", type=float, default=argparse.SUPPRESS,
                     metavar="S",

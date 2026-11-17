@@ -290,7 +290,7 @@ systemctl --user restart litearm-vr-bridge
 | 夹爪过温保护 | `follow.yaml` | `gripper.temp_limit` | `80`（℃） |
 | 手停下时机械臂抖 | `teleop.yaml` | `tuning.deadband_scale` | `0.1`（`1.0` = 用原始阈值；`0.0` = 关掉死区，噪声会原样放行，别关） |
 | 跟手太飘 / 太钝 | `teleop.yaml` | `tuning.smooth_alpha` | `0.2`（`1.0` 最跟手也最抖，`0.5` 更跟手；**不能写 0**） |
-| 末端抓取点高度变了 | `teleop.yaml` | `tuning.tcp_offset` | `[0.0, 0.0, 0.18]`（米，标定值） |
+| 末端抓取点高度变了 | `teleop.yaml` | `tuning.tcp_offset` | `[0.0, 0.0, 0.0]` = 法兰、未装工具（出厂默认）；`[0.0, 0.0, 0.18]` = 夹爪抓取点标定值（米） |
 | 快挥时关节跳变 | `teleop.yaml` | `sim.max_step_rad` | `0.2`（rad/帧） |
 | 换 IK 后端 | `teleop.yaml` | `tuning.ik` | `pybullet`（另有 `pin` / `exact`） |
 | 手柄方向不对 | `teleop.yaml` | `mapping.*` | 标定值，别凭手感改 |

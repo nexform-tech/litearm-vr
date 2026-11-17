@@ -50,7 +50,8 @@ from litearm_teleop.vr_source import (  # noqa: E402
 from litearm_teleop.vr_source import frame_topic as vr_frame_topic  # noqa: E402
 from litearm_teleop.vr_source import parse_endpoints  # noqa: E402
 
-# 出厂末端偏移量（米，本体系）= 本台架夹爪的法兰→抓取点距离，沿 tip link 的 +z。
+# 出厂末端偏移量（米，本体系）= [0, 0, 0]，直接控制法兰（沿 tip link 的 +z）；
+# 装夹爪/灵巧手时可传如 0 0 0.18 延伸到抓取点。
 # **权威定义在 `src/litearm_teleop/teleop_sim.py` 的 `DEFAULT_TCP_OFFSET`**；本脚本
 # 只用标准库、不能 import 它，所以这里刻意重复一份，由 tests/test_teleop_sim.py
 # 的检查 [6] 守着两边不漂移。配置文件里的 tuning.tcp_offset 优先于它。
