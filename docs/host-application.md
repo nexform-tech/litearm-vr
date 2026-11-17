@@ -294,7 +294,7 @@ Frequently changed items (defaults taken from the two YAML files in the current 
 | Gripper over-temperature protection | `follow.yaml` | `gripper.temp_limit` | `80` (°C) |
 | Arm jitters while the controller is still | `teleop.yaml` | `tuning.deadband_scale` | `0.1` (`1.0` = raw thresholds; `0.0` = deadband off, tracking noise passes straight through — do not) |
 | Following feels drifty / sluggish | `teleop.yaml` | `tuning.smooth_alpha` | `0.2` (`1.0` = most responsive and jitteriest, `0.5` = more responsive; **never 0**) |
-| Grasp point height changed | `teleop.yaml` | `tuning.tcp_offset` | `[0.0, 0.0, 0.18]` (metres, calibrated) |
+| Grasp point height changed | `teleop.yaml` | `tuning.tcp_offset` | `[0.0, 0.0, 0.0]` = flange, no tool fitted (factory default); `[0.0, 0.0, 0.18]` = calibrated gripper grasp point (metres) |
 | Joint jumps when swinging fast | `teleop.yaml` | `sim.max_step_rad` | `0.2` (rad/frame) |
 | Switch IK backend | `teleop.yaml` | `tuning.ik` | `pybullet` (also `pin` / `exact`) |
 | Controller directions wrong | `teleop.yaml` | `mapping.*` | calibrated values — do not tweak by feel |

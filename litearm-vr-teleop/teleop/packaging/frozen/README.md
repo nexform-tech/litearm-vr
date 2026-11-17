@@ -101,7 +101,7 @@ LITEARM_TELEOP_MODELS=<仓库根>/teleop/models \
 
 另外在**裸 `ubuntu:22.04`（没有 python3、没有 conda、没有 libX11）**里复验过 ①②③④，
 全部通过 —— 这就是「目标机不需要 Python」的直接证据。`--config` 也是真读的：换一份
-`/tmp` 下的配置（`tcp_offset` 0.18 → 0.25），日志里那行跟着变。
+`/tmp` 下的配置（`tcp_offset` 0 → 0.25），日志里那行跟着变。
 
 ## 已知限制 / 坑
 
