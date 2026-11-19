@@ -269,6 +269,7 @@ class TeleopBridge:
         self._last_pose = {}
         self._tracking_missing = {"left": False, "right": False}
         self._homing_started = {"left": False, "right": False}
+        self._warned_missing_limits = set()
         self._last_timestamp = None
         self._timestamp_origin = None
         self._arrival_origin = None
@@ -282,14 +283,19 @@ class TeleopBridge:
 
     def hold(self, side, reason):
         arm = self._sim.arms()[side]
-        was_engaged = self._engaged[side] or self._starting[side] is not None
+        was_engaged = (self._engaged[side] or self._starting[side] is not None
+                       or self._homing_started[side])
         self._starting[side] = None
+        self._homing_started[side] = False
         newly_blocked = not self._blocked[side]
-        if newly_blocked and (arm._active or arm._hold_reason != reason):
+        homing = getattr(arm, "is_homing", lambda: False)()
+        if homing or (newly_blocked and (arm._active or arm._hold_reason != reason)):
             arm.hold(reason)
+        if homing:
+            self._homing_started[side] = False
         self._blocked[side] = True
         self._engaged[side] = False
-        if self._real is not None and (was_engaged or newly_blocked):
+        if self._real is not None and (was_engaged or homing or newly_blocked):
             self._real.hold(side)
 
     def input_fault(self, reason):
@@ -301,6 +307,20 @@ class TeleopBridge:
         self._last_timestamp = None
         self._timestamp_origin = None
         self._arrival_origin = None
+
+    def _apply_real_limits(self, side, arm, state):
+        lower, upper = state.get("q_min"), state.get("q_max")
+        if lower is None and upper is None:
+            if side not in self._warned_missing_limits:
+                print(f"[真机][{side}] 跟随端未提供关节限位，沿用当前 IK 限位", flush=True)
+                self._warned_missing_limits.add(side)
+            return True
+        try:
+            arm.set_hardware_limits(lower, upper)
+        except ValueError as error:
+            self.hold(side, f"无法应用真机关节限位: {error}")
+            return False
+        return True
 
     def handle_frame(self, data):
         now = time.monotonic()
@@ -366,20 +386,26 @@ class TeleopBridge:
                 continue
 
             a_prev = self._a_prev[side]
+            self._a_prev[side] = a_btn
             if a_btn and not a_prev:
                 print("[遥操][%s] A 键按下 → 启动平滑回零" % side, flush=True)
                 # 未握持时仿真臂只是出厂 home，未必等于真机实测位姿（尤其刚重启，
                 # 仿真从 home 起步）。不先同步就等于拿「仿真已在 home」去算回零，
                 # 整段直接 no-op —— 真机不动。按实测同步后再插值。
-                if self._real is not None and not self._engaged[side]:
+                if self._real is not None:
                     state = self._real.get_state(
                         side, arm._tuning.tracking["feedback_timeout"])
-                    if state is not None:
+                    if state is None:
+                        self.hold(side, "A 回零前缺少新鲜实机关节反馈")
+                        continue
+                    if not self._apply_real_limits(side, arm, state):
+                        continue
+                    if not self._engaged[side]:
                         try:
                             arm.sync_measured(state["q"])
                         except ValueError as error:
-                            print("[保持][%s] A 回零前实机同步失败: %s" % (side, error),
-                                  flush=True)
+                            self.hold(side, f"A 回零前实机同步失败: {error}")
+                            continue
                 if hasattr(self._sim, "start_homing"):
                     self._sim.start_homing(side, now)
                 elif hasattr(arm, "start_homing"):
@@ -387,7 +413,6 @@ class TeleopBridge:
                 self._engaged[side] = False
                 self._blocked[side] = False
                 self._starting[side] = None
-            self._a_prev[side] = a_btn
             if (self._tracking_missing[side] and self._last_seen[side] is not None
                     and now-self._last_seen[side] > arm._tuning.tracking["input_timeout"]
                     and (self._engaged[side] or self._starting[side] is not None)):
@@ -411,6 +436,8 @@ class TeleopBridge:
                     state = self._real.get_state(side, arm._tuning.tracking["feedback_timeout"])
                     if state is None:
                         self.hold(side, "缺少新鲜实机关节反馈")
+                    elif not self._apply_real_limits(side, arm, state):
+                        state = None
                 if self._real is None:
                     try:
                         self._sim.start(side, pos, quat, now)
@@ -476,9 +503,12 @@ class TeleopBridge:
                     and now-self._last_seen[side] > arm._tuning.tracking["input_timeout"]
                     and (self._engaged[side] or self._starting[side] is not None)):
                 self.hold(side, "手柄追踪持续丢失")
+            homing = getattr(arm, "is_homing", lambda: False)()
             if self._real is not None:
                 self._real.request_state(side)
                 state = self._real.get_state(side, arm._tuning.tracking["feedback_timeout"])
+                if state is not None and not self._apply_real_limits(side, arm, state):
+                    continue
                 if self._starting[side] is not None:
                     if now-self._last_seen[side] > arm._tuning.tracking["input_timeout"]:
                         self.hold(side, "等待启动时手柄输入超时")
@@ -498,11 +528,11 @@ class TeleopBridge:
                             self.hold(side, str(error))
                 if self._engaged[side] and self._real.command_error(side):
                     self.hold(side, "实机命令失败: " + self._real.command_error(side))
-                if self._engaged[side] and state is None:
+                if (self._engaged[side] or homing) and state is None:
                     self.hold(side, "实机关节反馈超时")
+                    continue
                 elif state is not None:
                     measured[side] = state
-            homing = getattr(arm, "is_homing", lambda: False)()
             if homing:
                 if self._real is not None and not self._homing_started[side]:
                     # 回零（A/X 或 GUI 键）不受 grip 触发，客户端不会走 start 握手；

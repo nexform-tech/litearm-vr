@@ -35,15 +35,18 @@ class MeasuredStateTests(unittest.TestCase):
 
 # Load the actual server class without importing optional hardware SDKs.
 import ast
+import math
 from pathlib import Path
 import threading
+from types import SimpleNamespace
 from unittest.mock import Mock
 
 
-def server_class(filename):
+def server_class(filename, **dependencies):
     tree = ast.parse((Path(__file__).parent / filename).read_text())
     node = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == "ArmFollowServer")
-    namespace = {"sdk_response": sdk_response, "LiteArmError": RuntimeError}
+    namespace = {"sdk_response": sdk_response, "LiteArmError": RuntimeError,
+                 "math": math, "threading": threading, **dependencies}
     exec(compile(ast.Module(body=[node], type_ignores=[]), filename, "exec"), namespace)
     return namespace["ArmFollowServer"]
 
@@ -58,13 +61,48 @@ class HoldTests(unittest.TestCase):
             "ok": True, "cmd": "state", "request_id": 7,
             "valid": True, "q": [0.1]*7, "age_s": 0.01}
         server._q_cmd = [0.2]*7
+        server._q_min, server._q_max = [-2.0]*7, [2.0]*7
 
         reply = server.handle({"cmd": "state", "request_id": 7})
 
         self.assertEqual(reply["q"], [0.1]*7)
         self.assertEqual(reply["cmd_q"], [0.2]*7)
+        self.assertEqual(reply["q_min"], [-2.0]*7)
+        self.assertEqual(reply["q_max"], [2.0]*7)
         reply["cmd_q"][0] = 99
+        reply["q_min"][0] = 99
         self.assertEqual(server._q_cmd[0], 0.2)
+        self.assertEqual(server._q_min[0], -2.0)
+
+    def test_stm32_uses_intersection_of_configured_and_firmware_limits(self):
+        cls = server_class("arm_follow_server_stm32.py")
+        server = cls.__new__(cls)
+        server._q_min, server._q_max = [-2.0]*7, [2.0]*7
+        server._arm = Mock()
+        server._arm.get_joint_limits.return_value = ([-3.0]*6 + [-1.5], [1.5]*7)
+
+        server._apply_firmware_limits()
+
+        self.assertEqual(server._q_min, [-2.0]*6 + [-1.5])
+        self.assertEqual(server._q_max, [1.5]*7)
+
+    def test_sdk_state_reports_resolved_motor_limits(self):
+        arm = Mock()
+        arm.config_info = {"data": {"motors": {
+            f"joint{i}": {"limits": {"q_min": -0.25*i, "q_max": 0.25*i}}
+            for i in range(1, 8)
+        }}}
+        arm.get_state.return_value = {"q": [0.1]*7, "feedback": {
+            "joints": [{"fresh": True, "age_s": 0.01} for _ in range(7)]}}
+        cls = server_class("arm_follow_server_sdk.py", Arm=Mock(return_value=arm),
+                           ArmState=SimpleNamespace(DISCONNECTED="disconnected"))
+        server = cls(config="test.yaml")
+
+        reply = server.handle({"cmd": "state", "request_id": 7})
+
+        self.assertTrue(reply["valid"])
+        self.assertEqual(reply["q_min"], [-0.25*i for i in range(1, 8)])
+        self.assertEqual(reply["q_max"], [0.25*i for i in range(1, 8)])
 
     def test_stm32_hold_preserves_stream_and_drops_far_target(self):
         cls = server_class("arm_follow_server_stm32.py")

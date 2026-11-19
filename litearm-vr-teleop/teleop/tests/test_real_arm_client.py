@@ -77,6 +77,18 @@ class FeedbackTests(unittest.TestCase):
         self.reply(cmd_q=[float("nan")] * 7)
         self.assertIsNone(self.client.get_state("left"))
 
+    def test_limits_are_validated_and_copied_with_feedback(self):
+        self.reply(q_min=[-1.5] * 7, q_max=[1.5] * 7)
+        state = self.client.get_state("left")
+        self.assertEqual(state["q_min"], [-1.5] * 7)
+        state["q_max"][0] = 100
+        self.assertEqual(self.client.get_state("left")["q_max"], [1.5] * 7)
+
+        for malformed in ({"q_min": [0] * 7}, {"q_min": [2] * 7, "q_max": [1] * 7}):
+            self.client._last_request["left"] = 0
+            self.reply(**malformed)
+            self.assertIsNone(self.client.get_state("left"))
+
     def test_ack_or_unsolicited_state_is_not_measurement(self):
         self.client._handle_response("left", self.sock,
             dict(cmd="state", request_id=999, valid=True, q=[0] * 7, age_s=0))

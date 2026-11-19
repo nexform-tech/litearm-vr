@@ -339,7 +339,9 @@ class Tuning:
                         rotation_tolerance=0.01, max_joint_velocity=2.0,
                         max_joint_acceleration=12.0, max_linear_velocity=1.5,
                         max_angular_velocity=8.0, hand_jump_position=0.15,
-                        hand_jump_rotation=0.8)
+                        hand_jump_rotation=0.8, wrist_translation_tolerance=0.005,
+                        wrist_max_upstream_delta=0.3490658503988659,
+                        wrist_max_joint_velocity=1.0)
         for key, value in (tracking or {}).items():
             if key not in defaults:
                 raise ValueError("unknown tracking setting: %s" % key)
@@ -839,11 +841,11 @@ class Arm:
                 joint_id_by_name[jname] = i
         self._joint_ids = [joint_id_by_name[prefix + joint_stem + str(k)]
                            for k in range(1, 8)]
-        # 限位取自 URDF（几何唯一真源）
-        self._lower = np.array([p.getJointInfo(self._robot, i, physicsClientId=self._cid)[8]
-                                for i in self._joint_ids])
-        self._upper = np.array([p.getJointInfo(self._robot, i, physicsClientId=self._cid)[9]
-                                for i in self._joint_ids])
+        # 纯仿真用 URDF 行程，真机跟随时取模型和跟随端配置的交集。
+        limits = [p.getJointInfo(self._robot, i, physicsClientId=self._cid)[8:10]
+                  for i in self._joint_ids]
+        self._model_lower, self._model_upper = np.asarray(limits, float).T
+        self._lower, self._upper = self._model_lower, self._model_upper
         # 末端 link：ee_joint（fixed）的子 link <prefix><ee_link_name>
         self._ee_link = next(
             i for i in range(n_j)
@@ -934,12 +936,34 @@ class Arm:
         self._set_q(q)
         return self._eef_pose()
 
+    def set_hardware_limits(self, lower, upper):
+        """Use the intersection of URDF and follower limits in joint order."""
+        lower = np.asarray(lower, float)
+        upper = np.asarray(upper, float)
+        if (lower.shape != (7,) or upper.shape != (7,)
+                or not np.all(np.isfinite([lower, upper])) or np.any(lower > upper)):
+            raise ValueError("invalid hardware joint limits")
+        lower = np.maximum(self._model_lower, lower)
+        upper = np.minimum(self._model_upper, upper)
+        if np.any(lower > upper):
+            raise ValueError("hardware joint limits do not intersect model limits")
+        if np.array_equal(lower, self._lower) and np.array_equal(upper, self._upper):
+            return
+        if self._pin is not None:
+            self._pin.set_position_limits(lower, upper)
+        self._lower, self._upper = lower, upper
+        clipped = np.clip(self._command_q, lower, upper)
+        self._command_velocity[clipped != self._command_q] = 0.0
+        self._command_q = clipped
+        if self._wrist_anchor_q is not None:
+            self._wrist_anchor_q = np.clip(self._wrist_anchor_q, lower, upper)
+
     def _get_robot_state_vector(self):
         pos, quat = self._eef_pose()
         return np.concatenate([[0.0, 0.0], pos, quat])
 
     def reset(self):
-        self._set_q(self._home)
+        self._set_q(np.clip(self._home, self._lower, self._upper))
         self._active = False
         self._a_held = False
         self._b_held = False
@@ -956,6 +980,7 @@ class Arm:
         self._last_hand = None
         self._command_q = self._get_q().copy()
         self._command_velocity = np.zeros(7)
+        self._wrist_anchor_q = None
         self._progress_t = None
         self._best_error = float("inf")
         self.update_marker()
@@ -1001,43 +1026,36 @@ class Arm:
         # 构造全可动关节（双臂=14）维参数：本臂自由，其余关节 lo=up=当前值 锁死。
         # pybullet 的 calculateInverseKinematics 只对可动关节返回解（跳过 fixed），
         # 故参数/输出维度 = len(self._all_rev_ids)。
-        n_all = len(self._all_rev_ids)
-        cur_all = np.array([p.getJointState(self._robot, j, physicsClientId=self._cid)[0]
-                            for j in self._all_rev_ids])
-        lo = [0.0] * n_all
-        up = [0.0] * n_all
-        ranges = [0.0] * n_all
-        rest = [0.0] * n_all
-        for k, j in enumerate(self._all_rev_ids):
-            if k in self._ik_index:
-                # ⚠ 别叫 `info` —— 它会遮蔽本方法的 `info` 形参（诊断回填用）。
-                jinfo = p.getJointInfo(self._robot, j, physicsClientId=self._cid)
-                lo[k] = jinfo[8]
-                up[k] = jinfo[9]
-                ranges[k] = up[k] - lo[k]
-                rest[k] = cur_all[k]
-            else:
-                # 锁死其它关节（另一臂）：上下限都 = 当前值
-                lo[k] = cur_all[k]
-                up[k] = cur_all[k]
-                ranges[k] = 0.0
-                rest[k] = cur_all[k]
+        cur_all = self._get_q_all()
+        # 其它关节（另一臂）的上下限都固定为当前值。
+        lo = cur_all.copy()
+        up = cur_all.copy()
+        rest = cur_all.copy()
+        lo[self._ik_index] = self._lower
+        up[self._ik_index] = self._upper
+        rest[self._ik_index] = np.clip(seed, self._lower, self._upper)
 
         quat_d = R.from_matrix(R_d).as_quat()
         q_all = np.asarray(p.calculateInverseKinematics(
             self._robot, self._ee_link,
             targetPosition=list(np.asarray(pos_d, float)),
             targetOrientation=list(quat_d),
-            lowerLimits=lo,
-            upperLimits=up,
-            jointRanges=ranges,
-            restPoses=rest,
-            jointDamping=[0.01] * n_all,
+            lowerLimits=lo.tolist(),
+            upperLimits=up.tolist(),
+            jointRanges=(up - lo).tolist(),
+            restPoses=rest.tolist(),
+            jointDamping=[0.01] * cur_all.size,
             maxNumIterations=200,
             residualThreshold=1e-4,
             physicsClientId=self._cid), float)
         # 取本臂的 7 维解
-        q_tgt = q_all[self._ik_index]
+        candidate = q_all[self._ik_index]
+        if not np.all(np.isfinite(candidate)):
+            if info is not None:
+                info["invalid_candidate"] = True
+            return q_cur, False
+        q_tgt = np.clip(candidate, self._lower, self._upper)
+        outside_limits = bool(np.any(np.abs(q_tgt - candidate) > 1e-8))
 
         pos, quat = self._fk(q_tgt)
         self._set_q(q_cur)
@@ -1050,7 +1068,8 @@ class Arm:
             info["err_rot"] = float(err_rot)
             info["pos_tol"] = self._cfg.ik_pos_tol
             info["rot_tol"] = self._cfg.ik_rot_tol
-        return q_tgt, (err_pos < self._cfg.ik_pos_tol
+            info["outside_limits"] = outside_limits
+        return q_tgt, (not outside_limits and err_pos < self._cfg.ik_pos_tol
                        and err_rot < self._cfg.ik_rot_tol)
 
     def sigma_min(self, q):
@@ -1099,6 +1118,9 @@ class Arm:
         self._progress_t = now
         self._best_error = float("inf")
         self._progress_target = self._target.raw_target()
+        self._wrist_anchor_q = None
+        self._translation_reference = self._progress_target[0].copy()
+        self._last_translation_t = -np.inf
         print("[遥操][%s] grip 按下：固定锚点跟踪" % self.name)
 
     def pause(self):
@@ -1108,18 +1130,20 @@ class Arm:
 
     def hold(self, reason):
         self.pause()
+        self._homing = False
         self._hold_reason = reason
         print("[保持][%s] %s；松开 grip 后重新握持" % (self.name, reason))
 
     def start_homing(self, now=None, max_joint_vel=None):
         """平滑回零（S-curve Cosine Profile）。"""
         now = time.monotonic() if now is None else now
-        q_cur = self._get_q()
-        delta = self._home - q_cur
+        q_cur = np.clip(self._get_q(), self._lower, self._upper)
+        home = np.clip(self._home, self._lower, self._upper)
+        delta = home - q_cur
         max_diff = float(np.max(np.abs(delta)))
         if max_diff < 1e-3:
-            self._set_q(self._home)
-            self._command_q = self._home.copy()
+            self._set_q(home)
+            self._command_q = home
             self._command_velocity = np.zeros(7)
             self._homing = False
             return False
@@ -1145,9 +1169,10 @@ class Arm:
     def _step_homing(self, now):
         now = time.monotonic() if now is None else now
         elapsed = now - self._homing_start_t
+        home = np.clip(self._home, self._lower, self._upper)
         if elapsed >= self._homing_duration:
-            self._set_q(self._home)
-            self._command_q = self._home.copy()
+            self._set_q(home)
+            self._command_q = home
             self._command_velocity = np.zeros(7)
             self._homing = False
             print(f"[遥操][{self.name}] 平滑回零完成", flush=True)
@@ -1157,8 +1182,9 @@ class Arm:
         s = 0.5 * (1.0 - np.cos(np.pi * tau))
         s_dot = 0.5 * np.pi * np.sin(np.pi * tau) / self._homing_duration
 
-        delta = self._home - self._homing_start_q
-        q_target = self._homing_start_q + s * delta
+        start = np.clip(self._homing_start_q, self._lower, self._upper)
+        delta = home - start
+        q_target = start + s * delta
         v_target = s_dot * delta
 
         self._set_q(q_target)
@@ -1306,6 +1332,7 @@ class Arm:
         self._resting = not (self._target._moving_t or self._target._moving_r)
         dp = tgt_tcp-cur_tcp
         dr = R.from_matrix(tgt_R @ cur_R.T).as_rotvec()
+        wrist_tracking = self._use_wrist_tracking(raw_p, dp, dr, now)
         # 中间可达参考限速，不覆盖保存的手柄绝对目标。
         step_fraction = min(1.0,
                             cfg["max_linear_velocity"]*dt/max(np.linalg.norm(dp), 1e-12),
@@ -1316,26 +1343,29 @@ class Arm:
         step_p = cur_tcp+dp-step_R @ self._tcp_offset
         q_before = self._get_q_all()
         self._last_ik_info = {}
-        if self._ik_backend == "exact":
+        if wrist_tracking:
+            self._step_wrist(q_before, cur_tcp, tgt_tcp, dr, dt)
+        elif self._ik_backend == "exact":
             self._step_exact(dp, dr, dt)
         elif self._ik_backend == "pin":
             self._step_pin(step_p, step_R, dt)
         else:
             self._step_pybullet(step_p, step_R, dt)
-        candidate = self._get_q()
-        # 所有后端共享实际控制周期的速度/加速度约束。
-        delta = candidate-self._command_q
-        accel = cfg["max_joint_acceleration"]
-        # The candidate is one rate-limited step, not a stop waypoint. Estimate
-        # distance to the complete target for braking; near the endpoint the
-        # fraction is 1 and this is the original finite-target stopping rule.
-        remaining = np.abs(delta) / max(step_fraction, 1e-12)
-        braking = np.sqrt((accel*dt)**2 + 2*accel*remaining)-accel*dt
-        speed = np.minimum(np.abs(delta)/dt, braking)
-        velocity = np.sign(delta)*np.minimum(speed, cfg["max_joint_velocity"])
-        velocity = np.clip(velocity, self._command_velocity-accel*dt,
-                           self._command_velocity+accel*dt)
-        q_new = np.clip(self._command_q+velocity*dt, self._lower, self._upper)
+        q_new = self._get_q()
+        if not wrist_tracking:
+            # The wrist solver already includes the rate and acceleration limits
+            # in its solve. Limiting each joint again would change the TCP path.
+            delta = q_new-self._command_q
+            accel = cfg["max_joint_acceleration"]
+            # Estimate distance to the complete target for braking because the
+            # candidate is one rate-limited step, not a stop waypoint.
+            remaining = np.abs(delta) / max(step_fraction, 1e-12)
+            braking = np.sqrt((accel*dt)**2 + 2*accel*remaining)-accel*dt
+            speed = np.minimum(np.abs(delta)/dt, braking)
+            velocity = np.sign(delta)*np.minimum(speed, cfg["max_joint_velocity"])
+            velocity = np.clip(velocity, self._command_velocity-accel*dt,
+                               self._command_velocity+accel*dt)
+            q_new = np.clip(self._command_q+velocity*dt, self._lower, self._upper)
         self._command_velocity = (q_new-self._command_q)/dt
         self._command_q = q_new
         self._set_q(q_new)
@@ -1354,6 +1384,61 @@ class Arm:
                              q_before, cur_pos, cur_quat,
                              tgt_tcp-tgt_R @ self._tcp_offset, tgt_R)
         self.update_marker()
+
+    def _use_wrist_tracking(self, raw_p, position_error, rotation_error, now):
+        tolerance = self._tuning.tracking["wrist_translation_tolerance"]
+        if np.linalg.norm(raw_p - self._translation_reference) > tolerance:
+            self._translation_reference = raw_p.copy()
+            self._last_translation_t = now
+            self._wrist_anchor_q = None
+        if (self._wrist_anchor_q is None
+                and now - self._last_translation_t >= 0.15
+                and np.linalg.norm(position_error) <= tolerance
+                and np.linalg.norm(rotation_error) > self._tuning.deadband_r_out):
+            # Keep this joint reference for the entire turn, including while
+            # the hand is stationary at an unreachable orientation.
+            self._wrist_anchor_q = self._command_q.copy()
+        return self._wrist_anchor_q is not None
+
+    def _step_wrist(self, q_all, cur_tcp, tgt_tcp, rotation_step, dt):
+        cfg = self._tuning.tracking
+        q = q_all[self._ik_index]
+        lower, upper = self._lower.copy(), self._upper.copy()
+        upper_arm = slice(0, 4)
+        anchor = self._wrist_anchor_q[upper_arm]
+        travel = cfg["wrist_max_upstream_delta"]
+        lower[upper_arm] = np.maximum(lower[upper_arm], anchor - travel)
+        upper[upper_arm] = np.minimum(upper[upper_arm], anchor + travel)
+
+        accel = cfg["max_joint_acceleration"]
+        dv = accel * dt
+        # Leave room to brake before a joint reaches either range boundary.
+        distance = np.maximum(0.0, np.stack((q - lower, upper - q)))
+        velocity = self._command_velocity
+        wrist_speed = min(cfg["max_joint_velocity"], cfg["wrist_max_joint_velocity"])
+        # Decelerate into the lower speed limit when entering during motion.
+        speed_limit = np.maximum(wrist_speed, np.stack((-velocity, velocity)) - dv)
+        speed = np.minimum(speed_limit, np.sqrt(dv**2 + 2 * accel * distance) - dv)
+        lo = np.clip(velocity - dv, -speed[0], speed[1])
+        hi = np.clip(velocity + dv, -speed[0], speed[1])
+        J = self._jacobian_at_tcp(q_all)
+        dp = tgt_tcp - cur_tcp
+        target_velocity = np.r_[dp, rotation_step] / dt
+        # Weight position heavily in the solve, then check it with nonlinear
+        # FK. If rotating would take the TCP outside tolerance, give up that
+        # rotation step and solve for position alone.
+        weights = np.array([1000., 1000., 1000., 1., 1., 1.])
+        velocity = bounded_task_velocity(J * weights[:, None],
+                                         target_velocity * weights, lo, hi)
+        candidate = np.clip(q + velocity * dt, lower, upper)
+        flange, quat = self._fk(candidate)
+        error = np.linalg.norm(tgt_tcp - flange - R.from_quat(quat).apply(self._tcp_offset))
+        position_only = error > max(cfg["position_tolerance"], np.linalg.norm(dp))
+        if position_only:
+            velocity = bounded_task_velocity(J[:3], target_velocity[:3], lo, hi)
+            self._set_q(np.clip(q + velocity * dt, lower, upper))
+        self._last_ik_info = {"backend": self._ik_backend, "wrist_tracking": True,
+                              "position_only": bool(position_only)}
 
     # ---------- exact 后端 ----------
     def _jacobian_at_tcp(self, q_all):
@@ -1504,6 +1589,18 @@ class Arm:
                   "保留绝对目标继续受限追踪；持续不可达时自动保持。"
                   % (self.name, self.sigma_min(q_cur)))
 
+    def _bounded_pose_step(self, q_all, tgt_pos, tgt_R, dt):
+        """One feasible differential step toward a flange pose."""
+        cur_pos, cur_quat = self._eef_pose()
+        cur_R = R.from_quat(cur_quat).as_matrix()
+        dp = tgt_pos - cur_pos + (tgt_R - cur_R) @ self._tcp_offset
+        dr = R.from_matrix(tgt_R @ cur_R.T).as_rotvec()
+        q = q_all[self._ik_index]
+        lo, hi = self._velocity_box(q, dt)
+        velocity = bounded_task_velocity(self._jacobian_at_tcp(q_all),
+                                         np.r_[dp, dr] / dt, lo, hi)
+        return q + velocity * dt
+
     def _step_pin(self, tgt_pos, tgt_R, dt):
         """pinocchio + pink 微分 IK：每帧一次 QP 速度解算 + dt 积分。
 
@@ -1514,26 +1611,19 @@ class Arm:
         q_all_cur = self._get_q_all()
         info = {"backend": "pin"}
         q_all_new, ok = self._pin.solve(q_all_cur, tgt_pos, tgt_R, dt, info)
+        q_new = q_all_new[self._ik_index]
+        ok = ok and bool(np.all(q_new >= self._lower - 1e-8)
+                         and np.all(q_new <= self._upper + 1e-8))
         info["ok"] = bool(ok)
         if not ok:
             # A failed QP must not freeze all otherwise feasible task directions.
-            cur_pos, cur_quat = self._eef_pose()
-            cur_R = R.from_quat(cur_quat).as_matrix()
-            dp = (tgt_pos + tgt_R @ self._tcp_offset
-                  - cur_pos - cur_R @ self._tcp_offset)
-            dr = R.from_matrix(tgt_R @ cur_R.T).as_rotvec()
-            lo, hi = self._velocity_box(q_all_cur[self._ik_index], dt)
-            velocity = bounded_task_velocity(self._jacobian_at_tcp(q_all_cur),
-                                             np.r_[dp, dr] / dt, lo, hi)
-            q_all_new = q_all_cur.copy()
-            q_all_new[self._ik_index] += velocity * dt
+            q_new = self._bounded_pose_step(q_all_cur, tgt_pos, tgt_R, dt)
             info["limited"] = True
         # 外层步长钳制：**metavr 对 pink 与 pybullet 一视同仁**（其 _step_teleop 只有
         # 一处 `clip(q_tgt - q_cur, ±MAX_STEP_RAD)`，在 IK 分派之后）。因为求解是
         # 「本帧内积分到收敛」，一次大目标（快挥/掉帧）可能让关节一口气走很远，这层
         # 就是挡那个的「异常跳变兜底」；正常小增量下它不生效。
         q_cur = q_all_cur[self._ik_index]
-        q_new = q_all_new[self._ik_index]
         limit = self._cfg.max_step_rad
         info["dq_max"] = float(limit)
         info["clipped"] = bool(np.any(np.abs(q_new - q_cur) > limit))
@@ -1550,8 +1640,9 @@ class Arm:
         q_tgt, ok = self.ik(tgt_pos, tgt_R, q_seed=q_cur, info=ik_info)
         if not ok:
             self._warn_ik(q_cur)
-            # metavr 语义：best-effort —— 只告警，仍然把（限幅后的）解下发。
-            # 不置 q_tgt = q_cur：那会让参数化里被削掉的位移永远补不回来。
+        if ik_info.get("outside_limits") or ik_info.get("invalid_candidate"):
+            # Bullet 的 null-space limits 是软约束。改用行程盒内的候选。
+            q_tgt = self._bounded_pose_step(self._get_q_all(), tgt_pos, tgt_R, dt)
 
         # 步长限幅：与 metavr 同式 —— **只有** MAX_STEP_RAD 这一层。
         # （metavr 的注释：速度式 delta 映射下被削掉的位移不会补回，故 0.20 而非 0.08。）

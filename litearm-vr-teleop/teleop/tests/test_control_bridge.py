@@ -29,16 +29,23 @@ class FakeArm:
         self._tuning = SimpleNamespace(tracking={"input_timeout": 0.25,
                                                   "feedback_timeout": 0.25})
         self._active = False
+        self._homing = False
         self._hold_reason = None
         self.last_input = None
         self.measured = None
+        self.hardware_limits = None
+        self.limits_at_sync = None
         self.ticks = []
+
+    def set_hardware_limits(self, lower, upper):
+        self.hardware_limits = (list(lower), list(upper))
 
     def sync_measured(self, q):
         q = np.asarray(q, dtype=float)
         if q.shape != (7,) or not np.all(np.isfinite(q)):
             raise ValueError("invalid measured q")
         self.measured = q.copy()
+        self.limits_at_sync = self.hardware_limits
 
     def suspend_tracking(self, now):
         pass
@@ -46,6 +53,10 @@ class FakeArm:
     def hold(self, reason):
         self._hold_reason = reason
         self._active = False
+        self._homing = False
+
+    def is_homing(self):
+        return self._homing
 
     def tick(self, now, measured_q, applied_q=None):
         self.ticks.append((now, copy.deepcopy(measured_q), copy.deepcopy(applied_q)))
@@ -70,6 +81,7 @@ class FakeSim:
     def start(self, side, pos, quat, now):
         self.starts.append((side, pos.copy(), quat.copy(), now))
         self.arm._active = True
+        self.arm._homing = False
         self.arm.last_input = now
 
     def pause(self, side):
@@ -79,6 +91,8 @@ class FakeSim:
     def start_homing(self, side, now=None):
         self.homings.append((side, now))
         self.arm._active = False
+        self.arm._homing = True
+        self.arm.last_input = now
 
     def update_pose(self, side, pos, quat, now):
         self.updates.append((side, now))
@@ -186,6 +200,39 @@ class ControlBridgeTest(unittest.TestCase):
         self.feed()
         self.tick()
         self.assertEqual(self.sim.arm.ticks[-1][2], [0.25] * 7)
+
+    def test_real_limits_applied_before_measurement_sync(self):
+        limits = ([-1.5] * 7, [1.5] * 7)
+        self.real.state.update(q_min=limits[0], q_max=limits[1])
+        self.bridge.handle_frame(frame(grip=False, a_button=True))
+        self.assertEqual(self.sim.arm.limits_at_sync, limits)
+        self.assertEqual(len(self.sim.homings), 1)
+
+        limits = ([-1.0] * 7, [1.0] * 7)
+        self.real.state.update(q_min=limits[0], q_max=limits[1])
+        self.feed()
+        self.assertEqual(self.sim.arm.limits_at_sync, limits)
+        self.assertEqual(len(self.sim.starts), 1)
+
+    def test_incompatible_real_limits_hold_before_command(self):
+        self.feed()
+        self.real.state.update(q_min=[4.0] * 7, q_max=[5.0] * 7)
+        with patch.object(self.sim.arm, "set_hardware_limits",
+                          side_effect=ValueError("no intersection")):
+            self.tick()
+        self.assertIn("no intersection", self.sim.arm._hold_reason)
+        self.assertEqual(self.real.commands, [])
+
+    def test_real_homing_requires_fresh_feedback(self):
+        self.real.state = None
+        self.bridge.handle_frame(frame(grip=False, a_button=True))
+        self.assertEqual(self.sim.homings, [])
+
+        # The GUI can initiate homing directly on the sim after polling.
+        self.sim.start_homing("right", self.now)
+        self.tick()
+        self.assertFalse(self.sim.arm.is_homing())
+        self.assertEqual(self.real.commands, [])
 
     def test_release_sends_no_extra_joint_command_and_regrip_never_homes(self):
         self.feed()

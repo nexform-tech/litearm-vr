@@ -60,6 +60,14 @@ class ArmFollowServer:
         print(f"[真机] pylitearm.Arm config={self._config} iface={iface} "
               f"dry_run={dry_run}", flush=True)
         self._arm = Arm(self._config, iface=iface, dry_run=dry_run)
+        # Same resolved motor configuration used by the SDK's joint-limit wall.
+        config_info = getattr(self._arm, "config_info", {})
+        motors = config_info.get("data", {}).get("motors", {})
+        limits = [motors.get(f"joint{i}", {}).get("limits", {}) for i in range(1, 8)]
+        self._joint_limits = {}
+        if all("q_min" in limit and "q_max" in limit for limit in limits):
+            self._joint_limits = {key: [float(limit[key]) for limit in limits]
+                                  for key in ("q_min", "q_max")}
         self._iface = iface          # CAN 接口；随 ping 回包上报，供状态端标名
         self._kp = _to7(kp) if kp else None
         self._kd = _to7(kd) if kd else None
@@ -202,7 +210,8 @@ class ArmFollowServer:
                             "error": "SDK needs connect(read_only=True) for pre-grip feedback"}
                 self._arm.connect(read_only=True)
                 self._feedback_only = True
-            return sdk_response(self._arm, msg.get("request_id"))
+            return {**sdk_response(self._arm, msg.get("request_id")),
+                    **{key: list(values) for key, values in self._joint_limits.items()}}
 
         if cmd == "ping":
             try:

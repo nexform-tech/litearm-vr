@@ -122,7 +122,9 @@ class PinIKSolver:
         self._perm = np.asarray(perm, int)
 
         active = np.asarray(active_idx, int)
-        self._passive = np.setdiff1d(np.arange(self.nv), active)
+        self._active_pin = np.argsort(self._perm)[active]
+        self._passive = np.setdiff1d(np.arange(self.nv), self._active_pin)
+        self._has_fixed_joint = False
 
         # 限位：配置限位取自 URDF。速度限位形式上给显式向量（出厂值 = URDF 的 1.0），
         # 与 metavr 的 `VelocityLimit(model)` 数值一致；给向量只是为了留一个可调口。
@@ -165,6 +167,21 @@ class PinIKSolver:
         return np.asarray(oMf.translation, float), np.asarray(oMf.rotation, float)
 
     # ---------- 对外 ----------
+    def set_position_limits(self, lower, upper):
+        """Update Pink's configuration bounds for this arm."""
+        from pink.limits import ConfigurationLimit
+
+        model_lower = self.model.lowerPositionLimit.copy()
+        model_upper = self.model.upperPositionLimit.copy()
+        model_lower[self._active_pin] = lower
+        model_upper[self._active_pin] = upper
+        self.model.lowerPositionLimit = model_lower
+        self.model.upperPositionLimit = model_upper
+        self._limits[0] = ConfigurationLimit(self.model)
+        # ConfigurationLimit omits spans up to 1e-10 rad. The caller's
+        # bounded differential fallback can enforce these ranges.
+        self._has_fixed_joint = bool(np.any(upper - lower <= 1e-10))
+
     def fk(self, q_py_full):
         """正运动学：pybullet 序全 q → ee 世界位姿 (pos, R)。"""
         pos, Rot = self._frame_pose(np.asarray(q_py_full, float)[self._perm])
@@ -199,6 +216,8 @@ class PinIKSolver:
         pin = self._pin
         pink = self._pink
         q_py_full = np.asarray(q_py_full, float)
+        if self._has_fixed_joint:
+            return q_py_full.copy(), False
         pos_d = np.asarray(pos_d, float)
         R_d = np.asarray(R_d, float)
         q_pin = q_py_full[self._perm]

@@ -209,6 +209,106 @@ litearm-vr-follow/run_status_aggregator.sh \
 python3 litearm-vr-follow/status_listen.py
 ```
 
+### 5.5 Validate a 120° wrist turn on a single upright STM32 arm
+
+Teleop reads `q_min/q_max` from the follower's `state` response and intersects
+those bounds with the URDF limits for IK. The default wrist-turn settings are
+5 mm of hand translation, ±20° of travel from the start of the turn for each
+of J1–J4, and a joint speed limit of 1 rad/s. When wrist travel runs out, the
+solver prioritizes TCP position and allows orientation error.
+
+#### Update and start the services
+
+Replace the paths for the current checkout and Python environment as needed.
+Set `PR_NUMBER` to the pull request under test. Fetch its head into a separate
+checkout and run both services from that checkout.
+
+```bash
+export OLD_REPO="/path/to/current/litearm-vr"
+export FIELD_WT="$HOME/litearm-vr-wrist-test"
+export TELEOP_DIR="$FIELD_WT/litearm-vr-teleop/teleop"
+export RUN_DIR="$HOME/wrist-120/run-120"
+export TELEOP_PY="$HOME/miniconda3/envs/metavr-arm/bin/python"
+
+git clone --no-checkout https://github.com/nexform-tech/litearm-vr.git "$FIELD_WT" &&
+git -C "$FIELD_WT" fetch origin "refs/pull/${PR_NUMBER:?请设置 PR 编号}/head" &&
+git -C "$FIELD_WT" switch --detach FETCH_HEAD &&
+mkdir -p "$RUN_DIR" &&
+cp "$OLD_REPO/litearm-vr-follow/follow.yaml" "$RUN_DIR/follow.yaml" &&
+cp "$OLD_REPO/litearm-vr-teleop/teleop/config/teleop.yaml" "$RUN_DIR/teleop.yaml"
+```
+
+If the installation sets `FOLLOW_CONFIG` or `--config`, copy the active
+configuration files. Release the grip and confirm the arm is holding before
+stopping the old teleop process and then the old follower. Use the same variables
+in each terminal and reuse the existing Zenoh bridge and STM32 SDK environment.
+
+Terminal A starts the follower.
+
+```bash
+FOLLOW_CONFIG="$RUN_DIR/follow.yaml" \
+  "$FIELD_WT/litearm-vr-follow/run_stm32_server.sh" \
+  --port /dev/ttyACM0 --mode jf --tcp-port 9001 \
+  2>&1 | tee "$RUN_DIR/follow.log"
+```
+
+Terminal B reads the limits and starts sampling. Check that `limits.json` has
+`valid: true` and both bound arrays contain seven values in radians. If startup
+reports that the firmware limit query failed, the response reflects the follower
+configuration and the firmware values still need to be verified.
+
+```bash
+python3 "$TELEOP_DIR/scripts/wrist_120_check.py" limits \
+  127.0.0.1:9001 "$RUN_DIR/limits.json" &&
+python3 "$TELEOP_DIR/scripts/probe.py" sample \
+  --addr 127.0.0.1:9001 --hz 50 --out "$RUN_DIR/follow.jsonl"
+```
+
+Terminal C starts teleop. This example uses the flange as the TCP. When using
+an offset tool, pass its offset in metres here and use the same offset for export.
+
+```bash
+python3 "$TELEOP_DIR/launch/run_teleop_webxr.py" \
+  --metavr-py "$TELEOP_PY" --config "$RUN_DIR/teleop.yaml" \
+  --source zenoh --arm-id armA --zenoh-mode peer --zenoh-connect tcp/127.0.0.1:7447 \
+  --no-dual --no-side --ik pybullet --control-frame tool --tcp-offset 0 0 0 \
+  --no-hand --no-gripper --real --real-left 127.0.0.1:9001 --real-right 127.0.0.1:9001 \
+  --probe "$RUN_DIR/sim.jsonl" 2>&1 | tee "$RUN_DIR/teleop.log"
+```
+
+#### Record and review the trial
+
+1. Clear the workspace, remove the payload, and keep the emergency stop within
+   reach. Use the site's normal procedure to bring the arm near `sim.single_q_home`.
+2. Hold the right grip and keep the controller still for about 1 s. With its
+   position fixed, rotate it +120° around its local X axis at grip engagement
+   over about 2 s. Hold for about 1.5 s, rotate back over about 2 s, and keep still
+   for about 1 s before releasing the grip. Release immediately if the arm sweeps
+   unexpectedly.
+3. Record one grip interval and avoid pressing A. After releasing the grip,
+   stop teleop and the sampler with Ctrl-C, then export the data.
+
+```bash
+python3 "$TELEOP_DIR/scripts/wrist_120_check.py" report "$RUN_DIR" \
+  --urdf "$TELEOP_DIR/models/litearm_description/urdf/litearm_description.urdf" \
+  --tcp-offset 0 0 0
+```
+
+- In `tcp.csv`, check that the controller angle peaked near 120°, controller
+  translation stayed below the configured threshold, and `wrist_tracking` was
+  active during the turn and hold.
+- In `joints.csv`, check that the teleop target, the follower's received target,
+  and the command sent to the firmware stayed inside the effective limits.
+  Check each upstream joint's peak displacement. The trial exercises J7
+  saturation when J7 approaches the effective boundary and stays within it.
+- The `measured_fk` series in `tcp.csv` is computed using encoder measurements
+  and the kinematic model. Compare its peak and final displacement with the
+  bench's allowed position error. The offline PyBullet reference reached a
+  20° J1 excursion, a −89° J7 minimum, and about 0.02 mm peak TCP displacement.
+
+Keep the entire capture directory. To roll back, stop the new processes and
+start the original commands from the previous checkout.
+
 ---
 
 ## 6. Stop

@@ -235,6 +235,8 @@ class RealArmClient:
             return {**state, "q": list(state["q"]),
                     "cmd_q": (None if state.get("cmd_q") is None
                               else list(state["cmd_q"])),
+                    "q_min": None if state["q_min"] is None else list(state["q_min"]),
+                    "q_max": None if state["q_max"] is None else list(state["q_max"]),
                     "age_s": age}
 
     def _handle_response(self, side, sock, response):
@@ -268,15 +270,27 @@ class RealArmClient:
                 raw_cmd_q = response.get("cmd_q")
                 cmd_q = (None if raw_cmd_q is None
                          else [float(x) for x in raw_cmd_q])
+                lower = response.get("q_min")
+                upper = response.get("q_max")
+                # Older servers omit both fields. Reject a partial or malformed pair.
+                if "q_min" in response or "q_max" in response:
+                    if not isinstance(lower, list) or not isinstance(upper, list):
+                        raise ValueError("invalid real joint limits")
+                    lower, upper = [float(x) for x in lower], [float(x) for x in upper]
+                    if (len(lower) != 7 or len(upper) != 7 or
+                            not all(math.isfinite(lo) and math.isfinite(hi) and lo <= hi
+                                    for lo, hi in zip(lower, upper))):
+                        raise ValueError("invalid real joint limits")
                 age = float(response["age_s"])
                 valid = (response.get("valid") is True and len(q) == 7
                          and all(math.isfinite(x) for x in q)
                          and (cmd_q is None or (len(cmd_q) == 7
                               and all(math.isfinite(x) for x in cmd_q)))
                          and math.isfinite(age) and age >= 0)
-            except (KeyError, TypeError, ValueError):
+            except (KeyError, OverflowError, TypeError, ValueError):
                 valid = False
             self._states[side] = ({"q": q, "cmd_q": cmd_q,
+                                   "q_min": lower, "q_max": upper,
                                    "age_s": age + now - sent,
                                    "received_at": now, "request_id": request_id}
                                   if valid else None)

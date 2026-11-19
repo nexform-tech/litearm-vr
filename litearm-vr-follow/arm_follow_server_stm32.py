@@ -91,6 +91,11 @@ class Stm32Arm:
         st = self._raw_state()
         return list(st.q) if st is not None else None
 
+    def get_joint_limits(self):
+        """读回固件中当前生效的软限位。"""
+        params = self._arm.params.all_joint_params()
+        return [p.q_min for p in params], [p.q_max for p in params]
+
     def get_state(self):
         """本服务内部沿用的 dict 形状；无帧时 None。"""
         st = self._raw_state()
@@ -272,6 +277,7 @@ class ArmFollowServer:
             [-2.949607, -1.797689, -2.80998, -3.07178, -2.80998, -1.553343, -1.553343]
         self._q_max = _to7(q_max) if q_max else \
             [2.949607, 1.797689, 2.80998, 0.593412, 2.80998, 1.553343, 1.553343]
+        self._apply_firmware_limits()
         self._max_speed = _to7(max_speed) if max_speed else [2.0] * 7
         self._max_accel = _to7(max_accel) if max_accel else [3.0] * 7
         print(f"[真机] 限位 q_min={self._q_min}", flush=True)
@@ -289,6 +295,27 @@ class ArmFollowServer:
         self._last_target = None             # 最近一帧仿真下发目标(原始, 未 slew)
         self._anchor = None                  # 静止保持锚点(粘滞设定点)
         self._hold_count = 0                 # 连续"目标几乎不变"帧计数
+
+    def _apply_firmware_limits(self):
+        if (self._q_min is None or self._q_max is None or
+                not all(math.isfinite(lo) and math.isfinite(hi) and lo <= hi
+                        for lo, hi in zip(self._q_min, self._q_max))):
+            raise ValueError("跟随端关节限位须为有效的七轴区间")
+        try:
+            firmware_min, firmware_max = self._arm.get_joint_limits()
+        except (AttributeError, LiteArmError) as error:
+            print(f"[真机] 读取固件限位失败，使用跟随配置限位: {error}", flush=True)
+            return
+        if len(firmware_min) != 7 or len(firmware_max) != 7:
+            return  # 非七轴固件不会产生有效实测反馈
+        if not all(math.isfinite(lo) and math.isfinite(hi) and lo <= hi
+                   for lo, hi in zip(firmware_min, firmware_max)):
+            raise ValueError("固件返回无效关节限位")
+        lower = [max(lo, fw_lo) for lo, fw_lo in zip(self._q_min, firmware_min)]
+        upper = [min(hi, fw_hi) for hi, fw_hi in zip(self._q_max, firmware_max)]
+        if any(lo > hi for lo, hi in zip(lower, upper)):
+            raise ValueError("跟随配置限位与固件限位没有交集")
+        self._q_min, self._q_max = lower, upper
 
     # ---- slew/限位 (照搬 arm_follow_server.py) ----
     def _clamp_to_joint_limits(self, q):
@@ -511,6 +538,8 @@ class ArmFollowServer:
 
         if cmd == "state":
             measured = self._arm.measured_state(msg.get("request_id"))
+            measured["q_min"] = list(self._q_min)
+            measured["q_max"] = list(self._q_max)
             with self._lock:
                 # Post-clamp/post-sticky-hold/post-slew target that is actually
                 # sent to the firmware.  Teleop must compare measured q with

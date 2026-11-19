@@ -196,6 +196,87 @@ litearm-vr-follow/run_status_aggregator.sh \
 python3 litearm-vr-follow/status_listen.py
 ```
 
+### 5.5 STM32 单臂正装的 120° 转腕复测
+
+遥操通过 `state` 读取跟随端的 `q_min/q_max`，与 URDF 行程取交集后用于 IK。
+默认纯转腕约束为手柄平移 5 mm、J1–J4 相对该段起点各 ±20°、关节速度 1 rad/s。
+腕部行程不足时，求解优先保持 TCP 位置，允许姿态跟随误差。
+
+#### 更新和启动
+
+按现场修改旧检出目录和 Python 路径。将 `PR_NUMBER` 设为待验收的 PR 编号，从后继仓库拉取该提交，在独立目录启动两端。
+
+```bash
+export OLD_REPO="/path/to/current/litearm-vr"
+export FIELD_WT="$HOME/litearm-vr-wrist-test"
+export TELEOP_DIR="$FIELD_WT/litearm-vr-teleop/teleop"
+export RUN_DIR="$HOME/wrist-120/run-120"
+export TELEOP_PY="$HOME/miniconda3/envs/metavr-arm/bin/python"
+
+git clone --no-checkout https://github.com/nexform-tech/litearm-vr.git "$FIELD_WT" &&
+git -C "$FIELD_WT" fetch origin "refs/pull/${PR_NUMBER:?请设置 PR 编号}/head" &&
+git -C "$FIELD_WT" switch --detach FETCH_HEAD &&
+mkdir -p "$RUN_DIR" &&
+cp "$OLD_REPO/litearm-vr-follow/follow.yaml" "$RUN_DIR/follow.yaml" &&
+cp "$OLD_REPO/litearm-vr-teleop/teleop/config/teleop.yaml" "$RUN_DIR/teleop.yaml"
+```
+
+使用自定义 `FOLLOW_CONFIG` 或 `--config` 的现场应复制实际生效的文件。
+松开 grip 并确认持位后，依次停止旧遥操和旧跟随端。下面三个终端使用同一组路径变量，
+沿用已有的 Zenoh bridge 和 STM32 SDK 环境。
+
+终端 A 启动跟随端。
+
+```bash
+FOLLOW_CONFIG="$RUN_DIR/follow.yaml" \
+  "$FIELD_WT/litearm-vr-follow/run_stm32_server.sh" \
+  --port /dev/ttyACM0 --mode jf --tcp-port 9001 \
+  2>&1 | tee "$RUN_DIR/follow.log"
+```
+
+终端 B 查询限位并采样。确认 `limits.json` 中 `valid` 为真，且上下限各有七个弧度值。
+若跟随端报告读取固件限位失败，回包使用跟随配置的范围，固件限位仍待核验。
+
+```bash
+python3 "$TELEOP_DIR/scripts/wrist_120_check.py" limits \
+  127.0.0.1:9001 "$RUN_DIR/limits.json" &&
+python3 "$TELEOP_DIR/scripts/probe.py" sample \
+  --addr 127.0.0.1:9001 --hz 50 --out "$RUN_DIR/follow.jsonl"
+```
+
+终端 C 启动遥操。示例以法兰为 TCP，安装工具时使用实际工具偏移，并在导出时传入同一组值。
+
+```bash
+python3 "$TELEOP_DIR/launch/run_teleop_webxr.py" \
+  --metavr-py "$TELEOP_PY" --config "$RUN_DIR/teleop.yaml" \
+  --source zenoh --arm-id armA --zenoh-mode peer --zenoh-connect tcp/127.0.0.1:7447 \
+  --no-dual --no-side --ik pybullet --control-frame tool --tcp-offset 0 0 0 \
+  --no-hand --no-gripper --real --real-left 127.0.0.1:9001 --real-right 127.0.0.1:9001 \
+  --probe "$RUN_DIR/sim.jsonl" 2>&1 | tee "$RUN_DIR/teleop.log"
+```
+
+#### 采集和判定
+
+1. 空载并清空工作区，急停放在手边。按现场流程将手臂移至 `sim.single_q_home` 附近。
+2. 右手握住 grip，静止约 1 秒，然后固定手柄位置，绕握持时的局部 X 轴在约 2 秒内转到 +120°。
+   保持约 1.5 秒，再用约 2 秒转回，静止约 1 秒后松开。出现异常扫动时立即松开。
+3. 一次采集保留一段握持，避免触发 A 键回零。松开后用 Ctrl-C 结束遥操和采样并导出。
+
+```bash
+python3 "$TELEOP_DIR/scripts/wrist_120_check.py" report "$RUN_DIR" \
+  --urdf "$TELEOP_DIR/models/litearm_description/urdf/litearm_description.urdf" \
+  --tcp-offset 0 0 0
+```
+
+- 在 `tcp.csv` 检查手柄峰值接近 120°、手柄平移小于配置阈值，且转动和保持期启用 `wrist_tracking`。
+- 在 `joints.csv` 检查遥操目标、跟随端收到的目标和下发指令均位于有效限位内，
+  并检查 J1–J4 最大偏移。J7 接近有效边界且保持在边界内时，才能确认到限后的行为。
+- `tcp.csv` 的 `measured_fk` 由实测关节角和模型正运动学推算。按台架允许偏差验收
+  转动、保持、回转期间的峰值及结束偏移。PyBullet 离线参考值为 J1 峰值 20°、
+  J7 最低 −89°、TCP 峰值偏移约 0.02 mm。
+
+保留整个采集目录。需要回退时，先结束新进程，再从旧检出目录按原命令启动。
+
 ---
 
 ## 6. 停止

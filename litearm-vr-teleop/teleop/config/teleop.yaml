@@ -151,6 +151,9 @@ tracking:
   max_angular_velocity: 8.0    # rad/s，放开到8.0rad/s（约460°/s匹配腕部翻转）
   hand_jump_position: 0.15     # m，超过此跳变阈值的样本需下一连续样本确认，不锁停
   hand_jump_rotation: 0.8      # rad，旋转跳变确认阈值
+  wrist_translation_tolerance: 0.005      # m，判定纯转腕时允许的手柄平移量
+  wrist_max_upstream_delta: 0.3490658503988659 # rad（20°），纯转腕期间 J1–J4 各轴相对该段起点的最大偏移
+  wrist_max_joint_velocity: 1.0         # rad/s，纯转腕时留出协调减速的余量
 
 
 # -----------------------------------------------------------------------------
