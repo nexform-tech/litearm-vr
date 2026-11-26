@@ -420,6 +420,12 @@ def _check_zenoh_port(cfg: Config, world: Probes) -> Check:
     probe_host = "127.0.0.1" if host in ("0.0.0.0", "::", "", "*") else host
     if world.bind_ok(probe_host, port):
         return Check("zenoh_port", OK, f"{host}:{port} 可用")
+    health = world.health(_client_host(cfg.bridge_host), cfg.bridge_port) or {}
+    if _looks_like_bridge(health) and (health.get("zenoh") or {}).get("ready"):
+        return Check(
+            "zenoh_port", OK,
+            f"{host}:{port} 由本服务监听（已在运行）",
+        )
     return Check(
         "zenoh_port",
         FAIL,

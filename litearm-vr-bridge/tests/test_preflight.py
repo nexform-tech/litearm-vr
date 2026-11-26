@@ -220,6 +220,25 @@ class PreflightTest(unittest.TestCase):
         self.assertIn("7447", check.hint)
         self.assertIn("litearm-server", check.hint)
 
+    def test_zenoh_port_owned_by_our_bridge_is_ok(self) -> None:
+        """The bridge itself owns the endpoint once installed and running."""
+        health = {"version": "0.1.0", "headset_online": False,
+                  "zenoh": {"ready": True}}
+        self.probes = probes(bind_ok=lambda host, port: False,
+                             health=lambda host, port: health)
+        check = find(self.run_checks(), "zenoh_port")
+        self.assertEqual(check.status, OK)
+        self.assertIn("本服务", check.detail)
+
+    def test_zenoh_port_busy_while_our_session_is_down_still_fails(self) -> None:
+        """桥在跑但 zenoh 会话没起来：端口仍是被别人占着，不能报 OK。"""
+        health = {"version": "0.1.0", "headset_online": False,
+                  "zenoh": {"ready": False}}
+        self.probes = probes(bind_ok=lambda host, port: False,
+                             health=lambda host, port: health)
+        check = find(self.run_checks(), "zenoh_port")
+        self.assertEqual(check.status, FAIL)
+
     def test_zenoh_port_skipped_when_not_listening(self) -> None:
         check = find(self.run_checks(ZENOH_LISTEN_ENDPOINTS=""), "zenoh_port")
         self.assertEqual(check.status, INFO)
