@@ -27,8 +27,8 @@
 
 - [架构](../litearm-vr-teleop/teleop/docs/architecture.md)
 - [开发](../litearm-vr-teleop/teleop/docs/development.md)
-- [环境搭建](../litearm-vr-teleop/teleop/docs/environment-setup.md)
-- [使用指南](../litearm-vr-teleop/teleop/docs/user-guide.md)
+- [环境搭建](../litearm-vr-teleop/teleop/docs/environment-setup.zh-CN.md)
+- [使用指南](../litearm-vr-teleop/teleop/docs/user-guide.zh-CN.md)
 - [排障](../litearm-vr-teleop/teleop/docs/troubleshooting.zh-CN.md)
 - [锚点跟踪](../litearm-vr-teleop/teleop/docs/anchored-tracking.md)
 

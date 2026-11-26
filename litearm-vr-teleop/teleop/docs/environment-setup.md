@@ -1,96 +1,109 @@
-# 环境准备与配置
+English | [简体中文](environment-setup.zh-CN.md)
 
-> 本文面向**首次部署/新用户**：从零准备一台能跑通 LiteArm VR 遥操作系统的电脑。
-> 已配置好的机器请直接看 [使用手册](user-guide.md)。
+# Environment setup and configuration
 
-## 1. 系统要求
+> This page is for a **first deployment or new user**: preparing a PC from
+> scratch to run the LiteArm VR teleoperation stack. If the machine is already
+> configured, read the [User guide](user-guide.md) instead.
 
-| 项 | 要求 | 说明 |
+## 1. System requirements
+
+| Item | Requirement | Notes |
 |---|---|---|
-| 操作系统 | Ubuntu 22.04 LTS | ROS2 humble 官方支持 |
-| ROS2 | humble（可选） | 仅 RViz2 可视化需要；无 ROS2 也能跑 pybullet 逆解 |
-| Python 环境 | conda（`metavr-arm`，Python 3.10） | 遥操仿真核心 |
-| 头显 | Meta Quest 3 | WebXR 浏览器手柄，与电脑同一 Wi-Fi |
+| Operating system | Ubuntu 22.04 LTS | ROS2 Humble is officially supported |
+| ROS2 | Humble (optional) | Needed only for RViz2 visualisation; pybullet IK works without ROS2 |
+| Python environment | conda (`metavr-arm`, Python 3.10) | The teleoperation simulation runtime |
+| Headset | Meta Quest 3 | WebXR browser with controllers, on the same Wi-Fi as the PC |
 
-> **最低配置**：只要 Python 环境 `metavr-arm` 即可运行遥操逆解（无 3D 显示）。
-> **完整配置**：Python 环境 + ROS2 humble（RViz2 显示机械臂模型）。
+> **Minimum setup**: the `metavr-arm` Python environment alone is enough to run
+> teleoperation IK (without 3D display).
+> **Full setup**: the Python environment plus ROS2 Humble (RViz2 shows the arm
+> model).
 
-## 2. 环境组成（两层依赖）
+## 2. Environment composition (two dependency layers)
 
-### 2.1 Python 环境 `metavr-arm`（必需）
+### 2.1 Python environment `metavr-arm` (required)
 
-遥操仿真的唯一运行时依赖，由 `environments/setup.sh` 一键创建：
+The only runtime dependency of the teleoperation simulation, created by
+`environments/setup.sh`:
 
-| 依赖 | 版本 | 用途 |
+| Dependency | Version | Purpose |
 |---|---|---|
-| numpy | 2.2.x | 数值计算 |
-| scipy | 1.15.x | 旋转向量/齐次变换 |
-| pybullet | `==3.2.7` | 机械臂 IK + 仿真（**必须锁 3.2.7**，3.2.6 与 numpy 2 ABI 不兼容） |
-| websockets | 16.x | WebSocket 遥操服务（`--source ws` 回退路径） |
-| eclipse-zenoh | `>=1.10` | **出厂数据源**：订阅中间层 `litearm-vr-bridge` 转发的 `vr_frame` 话题 |
-| pin | `>=2.6.3` | pinocchio，微分 IK 的模型/雅可比（`--ik pin` 后端；出厂后端是 `pybullet`） |
-| pin-pink | `>=4.4.0` | pink，微分 IK 的任务/QP 框架（PyPI 名是 `pin-pink`，`pink` 是无关的格式化工具） |
-| qpsolvers + quadprog | `>=4.3.1` | pink 的 QP 求解器后端 |
-| loop-rate-limiters | — | pink 的控制周期节流 |
+| numpy | 2.2.x | Numerical computation |
+| scipy | 1.15.x | Rotation vectors and homogeneous transforms |
+| pybullet | `==3.2.7` | Arm IK and simulation (**must stay at 3.2.7**; 3.2.6 is ABI-incompatible with numpy 2) |
+| websockets | 16.x | WebSocket teleoperation service (the `--source ws` fallback) |
+| eclipse-zenoh | `>=1.10` | **Default data source**: subscribes to the `vr_frame` topic forwarded by `litearm-vr-bridge` |
+| pin | `>=2.6.3` | pinocchio models and Jacobians for differential IK (the `--ik pin` backend; the default backend is `pybullet`) |
+| pin-pink | `>=4.4.0` | pink task/QP framework for differential IK (the PyPI name is `pin-pink`; `pink` is an unrelated formatter) |
+| qpsolvers + quadprog | `>=4.3.1` | QP solver backend for pink |
+| loop-rate-limiters | — | Control-loop throttling for pink |
 
-依赖清单唯一真源：`environments/metavr-arm-requirements.txt`。
+The single source of truth for the dependency list is
+`environments/metavr-arm-requirements.txt`.
 
-> `setup.sh` 建完环境会把解释器路径打出来。三个入口（`setup.sh` /
-> `launch/run_teleop_webxr.py` / `Makefile`）按同一套逻辑解析这个路径，
-> 所以装完直接 `make smoke` 即可；环境在非常规位置时传 `--metavr-py <该环境的 python>`
-> （或 `export METAVR_PY=<该环境的 python>`）。
+> `setup.sh` prints the interpreter path after creating the environment. The
+> three entry points (`setup.sh`, `launch/run_teleop_webxr.py`, `Makefile`)
+> resolve that path with the same logic, so `make smoke` works right after
+> installation. If the environment lives elsewhere, pass
+> `--metavr-py <that environment's python>` (or
+> `export METAVR_PY=<that environment's python>`).
 
-### 2.2 ROS2 humble（可选，仅 RViz2 可视化）
+### 2.2 ROS2 Humble (optional, RViz2 visualisation only)
 
-- `robot_state_publisher`：读 URDF → 发布 TF
-- `rviz2`：显示 RobotModel + TF
+- `robot_state_publisher`: reads the URDF and publishes TF
+- `rviz2`: shows RobotModel and TF
 
-无 ROS2 时，`launch/run_teleop_webxr.py` 会降级为纯 pybullet 逆解（无 3D 窗口）。
+Without ROS2, `launch/run_teleop_webxr.py` falls back to pure pybullet IK
+(no 3D window).
 
-## 3. 一键安装
+## 3. One-command installation
 
 ```bash
-# 1. Python 环境（需已装 conda；环境建在 conda 自己的根目录下）
+# 1. Python environment (conda must already be installed; the environment is created under conda's own root)
 bash environments/setup.sh
 
-# 2. ROS2 humble（可选，Ubuntu 22.04）
-# 参考官方安装：https://docs.ros.org/en/humble/Installation.html
-# 安装 robot_state_publisher + rviz2：
+# 2. ROS2 Humble (optional, Ubuntu 22.04)
+# Follow the official instructions: https://docs.ros.org/en/humble/Installation.html
+# Install robot_state_publisher and rviz2:
 sudo apt install ros-humble-robot-state-publisher ros-humble-rviz2
 ```
 
-`environments/setup.sh` 会做三件事：重建 conda 环境 → 装 pip 依赖 + editable 安装 `litearm-teleop` → 验证 import。
+`environments/setup.sh` does three things: rebuild the conda environment,
+install the pip dependencies and `litearm-teleop` in editable mode, then verify
+the imports.
 
-## 4. 验证安装
+## 4. Verify the installation
 
 ```bash
-# Python 环境冒烟测试（不弹窗口）
+# Python environment smoke test (no window)
 make smoke
-# 期望输出末尾：SMOKE TEST PASSED
+# Expected final line: SMOKE TEST PASSED
 
-# 完整链路（RViz2 显示 + 遥操服务）
-make teleop     # 或 ./launch/run_teleop_webxr.py（单臂）/ …… --dual（双臂）
+# Full chain (RViz2 display plus teleoperation service)
+make teleop     # or ./launch/run_teleop_webxr.py (single arm) / ... --dual (dual arm)
 ```
 
-## 5. 网络注意事项（本机镜像渠道）
+## 5. Network notes (mirrors used on this machine)
 
-| 资源 | 可用渠道 |
+| Resource | Available channel |
 |---|---|
-| conda 包 | 清华镜像（USTC anaconda 镜像已停用）：`--override-channels -c https://mirrors.tuna.tsinghua.edu.cn/anaconda/pkgs/main -c https://mirrors.tuna.tsinghua.edu.cn/anaconda/pkgs/r` |
-| pip 包 | 清华 PyPI（正常） |
-| GitHub | `ghfast.top` 镜像 zip（注意默认分支） |
-| HuggingFace / Meta | 不可达 |
+| conda packages | Tsinghua mirror (the USTC anaconda mirror is retired): `--override-channels -c https://mirrors.tuna.tsinghua.edu.cn/anaconda/pkgs/main -c https://mirrors.tuna.tsinghua.edu.cn/anaconda/pkgs/r` |
+| pip packages | Tsinghua PyPI (works normally) |
+| GitHub | `ghfast.top` mirror zip (mind the default branch) |
+| HuggingFace / Meta | Unreachable |
 
-> 镜像渠道已固化在 `environments/setup.sh`（默认清华），可用 `CONDA_MAIN` / `CONDA_R` 环境变量覆盖；
-> 其他网络正常的机器可改回 `defaults`。
+> The mirrors are baked into `environments/setup.sh` (Tsinghua by default) and
+> can be overridden with the `CONDA_MAIN` and `CONDA_R` environment variables;
+> machines with normal network access can switch back to `defaults`.
 
-## 6. 快速开始（配置完成后）
+## 6. Quick start (after configuration)
 
 ```bash
-make teleop          # 一键启动：清残留 → robot_state_publisher + rviz2 → 遥操服务（默认 zenoh 订阅）
-                     # 帧要先有源：另开一个终端跑 litearm-vr-bridge（它收头显的 ws 8765）
-make teleop ARGS="--source ws"   # 不接桥：本仓自己监听 8765，头显直连
-make stop            # 停止
+make teleop          # one command: clean leftovers -> robot_state_publisher + rviz2 -> teleoperation service (zenoh subscription by default)
+                     # frames need a source first: run litearm-vr-bridge in another terminal (it receives the headset on ws 8765)
+make teleop ARGS="--source ws"   # no bridge: this repository listens on 8765 and the headset connects directly
+make stop            # stop
 ```
 
-详见 [使用手册](user-guide.md) 与 [排障手册](troubleshooting.md)。
+See the [User guide](user-guide.md) and [Troubleshooting](troubleshooting.md).
