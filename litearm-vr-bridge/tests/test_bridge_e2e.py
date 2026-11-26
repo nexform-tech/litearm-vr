@@ -211,6 +211,21 @@ class SnapshotContractTest(unittest.IsolatedAsyncioTestCase):
             self.assertFalse(payload["headset_online"])
             self.assertIn("state", payload)
 
+    async def test_preflight_health_probe_recognizes_the_running_bridge(self) -> None:
+        """预检用裸 socket 问 `/healthz`；它必须能读懂真桥的应答。
+
+        桥的 `/healthz` 走 websockets 的 `process_request`，只认 HTTP/1.1 ——
+        预检探针写成 1.0 时对真桥一条响应都收不到，`port_bridge`/`zenoh_port`
+        就把"本服务已在运行"误报成"被别的程序占用"。
+        """
+        from litearm_vr_bridge.preflight import _health_json, _looks_like_bridge
+
+        async with running_bridge() as stack:
+            payload = await asyncio.to_thread(
+                _health_json, "127.0.0.1", stack.port
+            )
+            self.assertTrue(_looks_like_bridge(payload))
+
 
 class ForwardingTest(unittest.IsolatedAsyncioTestCase):
     async def test_latest_pose_and_grip_edges_arrive_byte_identical_in_order(self) -> None:
