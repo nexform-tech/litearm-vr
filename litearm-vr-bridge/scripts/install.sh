@@ -172,7 +172,7 @@ cat <<EOF
      （上游的 conda 环境由 submodules/litearm-vr-teleop 里的启动脚本自己找，
        找不到就 export TELEOP_SERVER_PY=<envs/metavr-arm/bin/python>）
 
-  2) 体检：./scripts/up.sh --doctor
+  2) 体检：./scripts/up.sh
 
   3) 起链路：./scripts/up.sh            # 仿真会自动拉起上游
              ./scripts/up.sh --link     # 接真机（会先要你确认工作区无人、急停在手）

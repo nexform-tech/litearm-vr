@@ -208,21 +208,18 @@ fi
 "$ROOT/.venv/bin/pip" install -q --upgrade pip >/dev/null 2>&1 || true
 "$ROOT/.venv/bin/pip" install -q -e "$ROOT" \\
   || die "装依赖失败（离线？）：$ROOT/.venv/bin/pip install -e $ROOT"'''
-new_venv = '''if [ -f "$ROOT/.venv/.bundle-prebuilt" ]; then
-  note 依赖 "使用安装包预置的 .venv（离线，不联网）"
+new_venv = '''if [ ! -x "$ROOT/.venv/bin/python" ]; then
+  python3 -m venv "$ROOT/.venv" || die "建 venv 失败（需要 python3-venv 包？）"
+fi
+if [ -d "$ROOT/wheelhouse" ]; then
+  # 升级路径：始终用当前包的 wheelhouse 覆盖/更新依赖，不能因旧标记跳过。
+  "$ROOT/.venv/bin/pip" install -q --upgrade --no-index --find-links "$ROOT/wheelhouse" "$ROOT" \\
+    || die "从 wheelhouse 装依赖失败"
+  touch "$ROOT/.venv/.bundle-prebuilt"
 else
-  if [ ! -x "$ROOT/.venv/bin/python" ]; then
-    python3 -m venv "$ROOT/.venv" || die "建 venv 失败（需要 python3-venv 包？）"
-  fi
-  if [ -d "$ROOT/wheelhouse" ]; then
-    "$ROOT/.venv/bin/pip" install -q --no-index --find-links "$ROOT/wheelhouse" "$ROOT" \\
-      || die "从 wheelhouse 装依赖失败"
-    touch "$ROOT/.venv/.bundle-prebuilt"
-  else
-    "$ROOT/.venv/bin/pip" install -q --upgrade pip >/dev/null 2>&1 || true
-    "$ROOT/.venv/bin/pip" install -q -e "$ROOT" \\
-      || die "装依赖失败（离线？）：$ROOT/.venv/bin/pip install -e $ROOT"
-  fi
+  "$ROOT/.venv/bin/pip" install -q --upgrade pip >/dev/null 2>&1 || true
+  "$ROOT/.venv/bin/pip" install -q -e "$ROOT" \\
+    || die "装依赖失败（离线？）：$ROOT/.venv/bin/pip install -e $ROOT"
 fi'''
 if old_venv not in s:
     sys.exit("install.sh: venv block not found")
@@ -463,7 +460,7 @@ Description: LiteArm VR bridge + CAN DKMS driver (combined package)
  postinst configures the CAN DKMS module and installs the bridge as a
  systemd service for the installing user.
  .
- Health check: /opt/litearm/litearm-vr-bridge/scripts/up.sh --doctor
+ Health check: /opt/litearm/litearm-vr-bridge/scripts/up.sh
 EOF
 
 cat > "$STAGE/DEBIAN/postinst" <<'EOF'
@@ -552,18 +549,17 @@ $1
 依赖已在安装包的 wheelhouse/ 里（不联网）。无人值守的机器：
     sudo $PKG/scripts/install.sh --system
 
-体检：$PKG/scripts/up.sh --doctor
+体检：$PKG/scripts/up.sh
 
 MSG
     exit 0
 }
 
 prebuild_venv() {
-    if [ -x "$PKG/.venv/bin/python" ]; then
-        touch "$PKG/.venv/.bundle-prebuilt"
-        return 0
+    if [ ! -x "$PKG/.venv/bin/python" ]; then
+        python3 -m venv "$PKG/.venv" || return 1
     fi
-    python3 -m venv "$PKG/.venv" || return 1
+    # 升级路径：始终用当前包的 wheelhouse 覆盖依赖，不能因旧 venv 存在就跳过。
     "$PKG/.venv/bin/python" - "$PKG/wheelhouse" "$PKG/src" <<'PY' || return 1
 import sys, zipfile
 from pathlib import Path
@@ -601,7 +597,7 @@ if [ -n "$RUNAS" ] && "$RUNAS" -u "$OP" -- env "XDG_RUNTIME_DIR=/run/user/$UID_O
     cat <<MSG
 
 [litearm-vr-bridge] 装好了：**用户级** systemd 服务，跑在 $OP 名下，已在运行。
-  体检：$PKG/scripts/up.sh --doctor
+  体检：$PKG/scripts/up.sh
   状态：$PKG/scripts/up.sh --status
   起链路：在上位机（litearm-vr-studio）的 VR 页上点「开始遥操」
 
@@ -622,7 +618,7 @@ if SUDO_USER="$OP" "$PKG/scripts/install.sh" --system >>"$LOG" 2>&1; then
       sudo systemctl edit litearm-vr-bridge
       加 Environment=DISPLAY=:0 与 Environment=XAUTHORITY=/home/$OP/.Xauthority
       或改用用户级：sudo -u $OP $PKG/scripts/install.sh --user
-  体检：$PKG/scripts/up.sh --doctor
+  体检：$PKG/scripts/up.sh
 
 MSG
     exit 0
