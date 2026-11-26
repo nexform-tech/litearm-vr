@@ -212,10 +212,14 @@ new_venv = '''if [ ! -x "$ROOT/.venv/bin/python" ]; then
   python3 -m venv "$ROOT/.venv" || die "建 venv 失败（需要 python3-venv 包？）"
 fi
 if [ -d "$ROOT/wheelhouse" ]; then
-  # 升级路径：始终用当前包的 wheelhouse 覆盖/更新依赖，不能因旧标记跳过。
-  "$ROOT/.venv/bin/pip" install -q --upgrade --no-index --find-links "$ROOT/wheelhouse" "$ROOT" \\
-    || die "从 wheelhouse 装依赖失败"
-  touch "$ROOT/.venv/.bundle-prebuilt"
+  # A bundled venv prebuilt by the root postinst is read-only for the
+  # operator; its dependencies were already refreshed from this wheelhouse.
+  if [ -w "$ROOT/.venv/lib" ]; then
+    "$ROOT/.venv/bin/pip" install -q --upgrade --no-index --find-links "$ROOT/wheelhouse" "$ROOT" \\
+      || die "从 wheelhouse 装依赖失败"
+  else
+    note 依赖 "预置 .venv 对当前用户只读；依赖已由安装包用当前 wheelhouse 刷新"
+  fi
 else
   "$ROOT/.venv/bin/pip" install -q --upgrade pip >/dev/null 2>&1 || true
   "$ROOT/.venv/bin/pip" install -q -e "$ROOT" \\
@@ -574,7 +578,6 @@ for wheel in sorted(wh.glob("*.whl")):
 PY
     "$PKG/.venv/bin/python" -c 'import litearm_vr_bridge, websockets, zenoh' || return 1
     chmod -R a+rX "$PKG/.venv"
-    touch "$PKG/.venv/.bundle-prebuilt"
 }
 
 if ! prebuild_venv; then
