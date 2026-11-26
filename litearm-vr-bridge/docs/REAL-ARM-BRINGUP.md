@@ -77,7 +77,7 @@ export TELEOP_SERVER_PY=<envs/metavr-arm/bin/python>            # 找不到 cond
 ### 档 0 · 只读预检（不碰硬件）
 
 ```bash
-python3 -m litearm_vr_bridge --doctor
+./scripts/up.sh --check-only
 ```
 
 **过了是什么样**：15 项里没有解释不清的 FAIL。

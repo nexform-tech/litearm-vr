@@ -122,7 +122,7 @@ journalctl -u litearm-vr-bridge -f
 
 ```bash
 # ⓪ 启动前体检：端口 / 上游脚本 / 参数对拍 / 串口或 CAN / 依赖 / 图形会话
-./scripts/up.sh
+./scripts/up.sh --check-only
 
 # ① 桥活着吗（HTTP，不是 WebSocket）
 curl -s http://127.0.0.1:8765/healthz | python3 -m json.tool
@@ -195,7 +195,7 @@ grip**（松 → 按）才会重新锚定并继续跟随。头显掉线兜底后
 
 ## 6. 排障
 
-先跑 `./scripts/up.sh`：端口、submodule、两种对拍、串口/CAN、依赖、DISPLAY 都能一次问清。
+先跑 `./scripts/up.sh --check-only`：端口、submodule、两种对拍、串口/CAN、依赖、DISPLAY 都能一次问清。
 
 - **头显连不上**：确认 `BRIDGE_PORT` 没被占用、防火墙放行、头显面板地址是 `<本机IP>:8765`。
 - **上游起不来**：看 `processes_detail` 里的 `exit_code` 和 `PROCESS_LOG_DIR/<name>.log` ——

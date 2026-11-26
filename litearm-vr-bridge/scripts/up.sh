@@ -25,7 +25,7 @@ DO_CHECK=1
 USE_SERVICE=auto
 LINK=auto          # auto | yes | no
 ASSUME_YES=0
-ACTION=up          # up | stop | status
+ACTION=up          # up | stop | status | check
 PY=""
 
 die() { echo "错误：$*" >&2; exit 1; }
@@ -44,6 +44,7 @@ usage() {
   --no-service   不用 systemd，就在本机后台起一个（日志与 pid 落在 logs/）
   --no-venv      不用 .venv，用系统 python3
   --no-check     跳过 --doctor 预检
+  --check-only   只跑 --doctor 预检后退出（不起桥）
   --stop         停桥
   --status       打印一帧链路快照
 EOF
@@ -58,6 +59,7 @@ while [ $# -gt 0 ]; do
     --no-service) USE_SERVICE=no; shift ;;
     --no-venv)    USE_VENV=0; shift ;;
     --no-check)   DO_CHECK=0; shift ;;
+    --check-only) ACTION=check; shift ;;
     --stop)       ACTION=stop; shift ;;
     --status)     ACTION=status; shift ;;
     -h|--help)    usage; exit 0 ;;
@@ -212,6 +214,11 @@ if [ "$DO_CHECK" = 1 ]; then
   if ! bridge --doctor; then
     die "预检有 FAIL，先修好再启动（或者 --no-check 跳过，但你知道自己在做什么）"
   fi
+fi
+
+if [ "$ACTION" = check ]; then
+  note 预检 "完成（--check-only），未启动桥"
+  exit 0
 fi
 
 # ── 起桥 ────────────────────────────────────────────────────────────────────
