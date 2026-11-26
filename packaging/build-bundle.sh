@@ -597,6 +597,10 @@ echo "[litearm-vr-bridge] 把服务装给用户 $OP（uid=$UID_OP）"
 if [ -n "$RUNAS" ] && "$RUNAS" -u "$OP" -- env "XDG_RUNTIME_DIR=/run/user/$UID_OP" \
         "$PKG/scripts/install.sh" --user >"$LOG" 2>&1; then
     loginctl enable-linger "$OP" >/dev/null 2>&1 || true
+    # A previous system-level unit would race the user unit for 8765/7447.
+    if [ -f /etc/systemd/system/litearm-vr-bridge.service ]; then
+        systemctl disable --now litearm-vr-bridge >/dev/null 2>&1 || true
+    fi
     cat <<MSG
 
 [litearm-vr-bridge] 装好了：**用户级** systemd 服务，跑在 $OP 名下，已在运行。
