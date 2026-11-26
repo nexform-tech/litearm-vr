@@ -1,312 +1,420 @@
+English | [简体中文](README.zh-CN.md)
+
 # litearm-vr-follow
 
-LiteArm 的**真机硬件驱动服务**：臂收 7 个关节角让它跟上，夹爪收 `close`/`open` 驱动开合，
-灵巧手收 `close`/`open`+左手/右手驱动握拳/张开。
+The **real-arm hardware driver service** for LiteArm: the arm receives seven
+joint angles and follows them; the gripper receives `close` / `open` to drive
+its jaws; the dexterous hand receives `close` / `open` plus left/right to make a
+fist or open.
 
-VR 遥操链路里最靠近硬件的一环：
+It is the layer closest to the hardware in the VR teleoperation chain:
 
 ```
-litearm-vr-teleop  ──TCP :9001/9002──▶  臂跟随服务   ──▶  STM32  ──CAN──▶  臂电机
-   （解算关节角）                          （跟随执行）
-litearm-vr-teleop  ──TCP :9003───────▶  夹爪服务      ──▶  socketcan ──CAN──▶  夹爪 DM 电机
-   （trigger 边沿）                        （close/open）
-litearm-vr-teleop  ──TCP :9004───────▶  灵巧手服务    ──▶  linkerbot SDK ─CAN─▶  L6 灵巧手
-   （trigger 边沿）                        （close/open+side）
+litearm-vr-teleop  ──TCP :9001/9002──▶  arm follow service  ──▶  STM32  ──CAN──▶  arm motors
+   (solves joint angles)                   (follow execution)
+litearm-vr-teleop  ──TCP :9003───────▶  gripper service     ──▶  socketcan ──CAN──▶  gripper DM motor
+   (trigger edge)                          (close/open)
+litearm-vr-teleop  ──TCP :9004───────▶  dexterous hand service ──▶ linkerbot SDK ─CAN─▶ L6 hand
+   (trigger edge)                          (close/open+side)
 
-status_aggregator.py ──TCP :9001/9003─▶ 各服务(ping/status，只读) ──Zenoh──▶ litearm/v4/arm/vr_arm
-   （汇总状态，100Hz/20Hz）                 （收状态、不驱硬件）              litearm/v4/grip/vr_grip
+status_aggregator.py ──TCP :9001/9003─▶ each service (ping/status, read-only) ──Zenoh──▶ litearm/v4/arm/vr_arm
+   (aggregates status, 100Hz/20Hz)         (reads status, never drives hardware)          litearm/v4/grip/vr_grip
 ```
 
-它**不做逆解、不碰头显数据**——上游给什么（关节角 / 开关），就让硬件做什么。
+It **does not solve IK and never touches headset data** — whatever the upstream
+sends (joint angles or switch commands), the hardware does.
 
-除了「收命令 → 驱硬件」，本仓还带一个**只读的状态汇总**：`status_aggregator.py` 经 TCP
-轮询各服务的实测状态，汇成一条 `FollowStatus` 用 Zenoh pub 出去（见下）。
+Besides "receive command -> drive hardware", this repository also carries a
+**read-only status aggregator**: `status_aggregator.py` polls each service over
+TCP, merges the measurements into a `FollowStatus`, and publishes it on Zenoh
+(see below).
 
-## 两个版本，二选一
+## Two versions, choose one
 
 | | `arm_follow_server_stm32.py` | `arm_follow_server_sdk.py` |
 | --- | --- | --- |
-| 到机械臂 | 串口 `/dev/ttyACM0` | socketcan `can0` |
-| 控制律在哪 | STM32 固件里 | 主机上（`pylitearm`） |
-| 额外依赖 | `arm_console.py`（见下） | `pylitearm` |
-| 启动 | `./run_stm32_server.sh` | `./run_sdk_server.sh` |
-| 无硬件自测 | `./run_stm32_comm_test.sh` | `--dry-run` |
+| To the arm | Serial `/dev/ttyACM0` | socketcan `can0` |
+| Where the control law runs | In the STM32 firmware | On the host (`pylitearm`) |
+| Extra dependency | `arm_console.py` (see below) | `pylitearm` |
+| Start | `./run_stm32_server.sh` | `./run_sdk_server.sh` |
+| Hardware-free self-test | `./run_stm32_comm_test.sh` | `--dry-run` |
 
-⚠️ **两个版本互斥**：它们驱动同一批电机，不能同时跑。
+Note: **the two versions are mutually exclusive** — they drive the same motors
+and must not run at the same time.
 
-⚠️ **真机会真实运动**。运行前确认机械臂上电、工作区无人、急停在手边。
+Note: **the real arm really moves**. Before running, confirm the arm is powered,
+the workspace is clear, and the emergency stop is within reach.
 
-## 配置：`follow.yaml`
+## Configuration: `follow.yaml`
 
-所有 `run_*.sh` 的参数都来自同目录的 **`follow.yaml`**——改那个文件、脚本就按新值启动，
-**不用再传形参**：
-
-```bash
-./run_sdk_server.sh            # 读 follow.yaml 的 arm_sdk 段
-./run_gripper_server.sh        # 读 gripper 段
-```
-
-优先级 **命令行 > follow.yaml > 脚本里的出厂常量**（把某个键删掉 = 回退出厂值，不会报错）。
-命令行仍可临时覆盖：
+Every `run_*.sh` takes its parameters from **`follow.yaml`** in the same
+directory: edit that file and the scripts start with the new values, **without
+passing arguments**:
 
 ```bash
-./run_sdk_server.sh --tcp-port 9002                       # 覆盖 arm_sdk.tcp_port
-FOLLOW_CONFIG=/path/to/other.yaml ./run_sdk_server.sh     # 换一份配置
+./run_sdk_server.sh            # reads the arm_sdk section of follow.yaml
+./run_gripper_server.sh        # reads the gripper section
 ```
 
-段落 ↔ 脚本：
+Priority is **command line > follow.yaml > factory constants in the script**
+(removing a key falls back to the factory value without error). The command line
+can still override temporarily:
 
-| 段 | 脚本 | | 段 | 脚本 |
+```bash
+./run_sdk_server.sh --tcp-port 9002                       # override arm_sdk.tcp_port
+FOLLOW_CONFIG=/path/to/other.yaml ./run_sdk_server.sh     # use another configuration
+```
+
+Section to script mapping:
+
+| Section | Script | | Section | Script |
 | --- | --- | --- | --- | --- |
 | `arm_stm32` | `run_stm32_server.sh` | | `hand` | `run_hand_server.sh` |
 | `arm_sdk` | `run_sdk_server.sh` | | `aggregator` | `run_status_aggregator.sh` |
 | `gripper` | `run_gripper_server.sh` | | `stm32_comm` | `run_stm32_comm_test.sh` |
 
-各键含义与取值都写在 `follow.yaml` 的注释里。解析器 `follow_config.py` 只用标准库（不依赖
-PyYAML）；`python3 follow_config.py --print <段>` 可先看某段会翻成什么命令行。
+Every key and its valid values are documented in the comments of `follow.yaml`.
+The parser `follow_config.py` uses only the standard library (no PyYAML);
+`python3 follow_config.py --print <section>` shows the command line a section
+would expand to.
 
-## 夹爪服务（`gripper_server.py`）
+## Gripper service (`gripper_server.py`)
 
-夹爪 DM 电机（CAN ID 0x08，DM4310）由 `gripper_server.py` 单独驱动，与臂的 follow server 并列
-（同属「收指令、驱电机」的硬件层）：
+The gripper DM motor (CAN ID 0x08, DM4310) is driven by `gripper_server.py`,
+alongside the arm follow server (both belong to the "receive command, drive
+motor" hardware layer):
 
 ```bash
-./run_gripper_server.sh --can can0 --port 9003         # 真机夹爪
+./run_gripper_server.sh --can can0 --port 9003         # real gripper
 ```
 
-协议：TCP，一行一条 JSON，`{"cmd":"close"}` / `{"cmd":"open"}` / `{"cmd":"ping"}`（回 `{"ok":true,"q":…,"tau":…}`）/ `{"cmd":"status"}`（**零 I/O** 回状态缓存，额外带 `enabled`/`error_code`/`fresh`/`age_ms` + 环诊断 `fault_code`/`target_rad`/`cmd_rad`/`t_mos`/`t_coil`，供 20Hz 轮询）。
+Protocol: TCP, one JSON object per line. `{"cmd":"close"}` / `{"cmd":"open"}` /
+`{"cmd":"ping"}` (replies `{"ok":true,"q":...,"tau":...}`) / `{"cmd":"status"}`
+(**zero I/O**: returns the cached status, plus `enabled`/`error_code`/`fresh`/
+`age_ms` and loop diagnostics `fault_code`/`target_rad`/`cmd_rad`/`t_mos`/
+`t_coil`, suitable for 20 Hz polling).
 
-`close` / `open` 都只做一件事：**投一个目标角度**（`close` → 标定闭合限位，`open` → 标定张开限位），立刻回执。
-真正的驱动是服务里**一条 ~200Hz 的控制环**（照 `litegrip-cpp` 的 `ControlLoop`，见
-[`docs/gripper-control-loop-rewrite.md`](docs/gripper-control-loop-rewrite.md)）：每拍
-「读反馈 → 看门狗/温度/故障 → 轨迹按 `--speed` 限速推进 → 力矩预算分给 kp/kd → 帧内位置钳位 → 发 MIT 帧」。
+`close` / `open` each do exactly one thing: **post a target angle** (`close` ->
+calibrated closed limit, `open` -> calibrated open limit) and reply immediately.
+The actual drive is **one ~200 Hz control loop** in the service (following
+`litegrip-cpp`'s `ControlLoop`; see
+[`docs/gripper-control-loop-rewrite.md`](docs/gripper-control-loop-rewrite.md)):
+each tick reads feedback, checks the watchdog/temperature/fault, advances the
+trajectory at `--speed`, splits the torque budget into kp/kd, clamps the
+position in-frame, and sends an MIT frame.
 
-三条要点，改这一块前必须先懂（否则会退回老毛病）：
+Three points must be understood before changing this code (otherwise the old
+problems return):
 
-- **帧里的 `q` 是「命令轨迹」，不是「最近读到的位置」。** 拿最近一次读数当设定值，与同一时刻的实测
-  天然有偏差（实测 ~0.7 mm），`kp × Δ` 就是一牛·米级的持续力，会把夹爪顶死在限位上形成 ~1.2s 的松弛振荡。
-- **帧里要求的力被几何封住**：`q_frame = 实测 + clamp(轨迹 − 实测, ±预算/kp)`，所以撞上工件/硬限位时
-  帧里要求的力矩**不超过预算** —— **夹持力就是 `--force`**，工件让位时误差变大、力自动保持，不需要
-  第二套「保力」模式，也不会「一次没到位就收工」。
-- **目标是个变量，不是一次动作**：改目标只覆盖它，下一拍轨迹就朝新目标走（≤5ms 换向），没有
-  「等这一片跑完」的延迟。**没有任何分片、重试、堵转判据。**
+- **The `q` in the frame is the commanded trajectory, not the latest measured
+  position.** Using the latest reading as the setpoint leaves a natural offset
+  from the same-instant measurement (about 0.7 mm), and `kp × Δ` becomes a
+  persistent force near 1 Nm that jams the gripper against the limit and causes
+  the ~1.2 s relaxation oscillation.
+- **The force requested in the frame is bounded by geometry**:
+  `q_frame = measured + clamp(trajectory − measured, ±budget/kp)`. When the
+  gripper hits a workpiece or a hard limit, the requested torque **does not
+  exceed the budget** — **the grip force is `--force`**. When the workpiece
+  yields, the error grows and the force is held automatically; no separate
+  "force hold" mode is needed, and it never "gives up after one attempt".
+- **The target is a variable, not a one-shot action**: changing the target
+  overrides it, and the next tick moves toward the new target (direction change
+  within 5 ms), with no "wait for this shard to finish" delay. **There are no
+  shards, retries, or stall criteria.**
 
-参数（全部可从命令行给，默认值是保守的起步档）：
+Parameters (all can be given on the command line; defaults are the conservative
+starting point):
 
-| 参数 | 默认 | 含义 |
+| Parameter | Default | Meaning |
 | --- | --- | --- |
-| `--speed` | 50 mm/s | 命令轨迹的推进速度上限（**不是** MIT 帧的 dq 字段，那恒为 0） |
-| `--force` | 20 N | 闭合侧的**力矩预算**（×0.1 = 2 Nm）= 夹持力上限 |
-| `--rate-hz` | 200 | 控制环周期 |
-| `--kp` / `--kd` | 20 / 0.5 | 增益上限；实际取值还会被预算按最坏情况压小 |
-| `--max-pos-error-mm` | 10 | 预算分配用的「最坏位置误差」：`kp ≤ 预算/它`。**调小 = 更硬**（如 5 → kp≈19.5） |
-| `--max-fb-vel` | 1 rad/s | 预算分配用的「最坏反馈速度」（决定 kd 上限） |
-| `--feedback-timeout` | 0.5 s | 多久没有新反馈帧算掉线 → 改发零增益帧 |
-| `--temp-limit` | 80 ℃ | MOS/线圈过温上限 → 安全停（零增益帧） |
-| `--status-hz` | 20 | **还没收到目标**（limp）时刷状态缓存的频率 |
+| `--speed` | 50 mm/s | Maximum advance speed of the commanded trajectory (**not** the MIT frame's dq field, which is always 0) |
+| `--force` | 20 N | **Torque budget** on the closing side (×0.1 = 2 Nm) = grip-force limit |
+| `--rate-hz` | 200 | Control-loop period |
+| `--kp` / `--kd` | 20 / 0.5 | Gain caps; the actual values are reduced by the budget for the worst case |
+| `--max-pos-error-mm` | 10 | "Worst position error" used to allocate the budget: `kp <= budget/this`. **Smaller = stiffer** (for example 5 -> kp≈19.5) |
+| `--max-fb-vel` | 1 rad/s | "Worst feedback velocity" used for the budget allocation (sets the kd cap) |
+| `--feedback-timeout` | 0.5 s | How long without a new feedback frame counts as disconnected -> send zero-gain frames |
+| `--temp-limit` | 80 °C | MOS/coil over-temperature limit -> safe stop (zero-gain frames) |
+| `--status-hz` | 20 | Rate at which the status cache is refreshed while **no target has been received yet** (limp) |
 
-> 抖动换过四次实现，根因各不相同，**改前先读 [`docs/gripper-jitter-analysis.md`](docs/gripper-jitter-analysis.md)**：
-> ① 自写「纯力矩保力 + open 打断」→ 空爪时纯力矩把夹爪一路挤进闭合硬限位、越挤越死，随后
-> `open` 第一段脱开位移太短、被 SDK 的堵转判据误判成「堵转」，表现为来回寸动；
-> ② 改用 SDK `close()` / `open()` → 位置环直推会压坏工件；
-> ③ `close` 改用 SDK `grasp()` + 分片 → 每片重跑整段闭合斜坡，分片边界一松一紧；
-> ④ 空闲保活用配置增益（kp=100）跑位置环 → 设定位取不到同一时刻的实测位置，顶死限位形成 ~1.2s 振荡。
-> 别为了让某一条现象消失就把上一条改回去。
+> The jitter problem went through four implementations with different root
+> causes; **read [`docs/gripper-jitter-analysis.md`](docs/gripper-jitter-analysis.md)
+> before changing it**:
+> 1. A hand-written "pure torque hold + open interrupt": with an empty gripper,
+>    pure torque pushed the jaws into the closed hard limit, harder and harder;
+>    then the first `open` segment moved too little and was misjudged as a stall
+>    by the SDK, causing back-and-forth inching.
+> 2. Switching to the SDK's `close()` / `open()`: the position loop pushed
+>    directly and could crush the workpiece.
+> 3. Using the SDK's `grasp()` with shards for `close`: each shard re-ran the
+>    whole closing ramp, and the shard boundaries alternated loose and tight.
+> 4. Idle keep-alive used the configured gain (kp=100) in a position loop: the
+>    setpoint could not match the same-instant measurement, jamming the limit
+>    and producing a ~1.2 s oscillation.
+> Do not revert one of these to make a single symptom disappear.
 
-**启动即 disable**：DM 电机上电默认保持在出厂零位（0 ≈ 闭合），故服务启动后**先发一帧 0xFD 失能**，
-让夹爪处于 limp，避免「一上电夹爪就闭合」。失能只需连通、不要求标定；**还没收到目标时**环保持
-limp（不使能、不发帧），收到第一个目标才按需 re-enable。要保留旧行为加 `--no-startup-disable`。
+**Disable at startup**: a DM motor powers up holding its factory zero
+(0 ≈ closed), so the service **first sends one 0xFD disable frame** to leave the
+gripper limp and avoid "the gripper closes as soon as power is applied".
+Disabling only needs a connection, not calibration. **Before the first target
+arrives**, the loop stays limp (no enable, no frames) and re-enables on demand
+when the first target arrives. Pass `--no-startup-disable` to keep the old
+behaviour.
 
-**启动即 open 归位**：服务启动后自动投一次**张开**目标。头显遥操的扳机是**切换**语义——第一下 =
-闭合；夹爪先落在 open，第一下扳机才是「闭合」。⚠ 这次归位**不算**「收到命令」，所以
-`status` 里的 `target_ratio` 开机后仍是 `None`（契约要的是「操作者最近一次命令」）。
-链路不通 / 未标定时它会被丢弃、保持 limp，不会误动。要关掉加 `--no-startup-open`。
+**Open at startup**: the service posts one **open** target after starting. The
+headset trigger is a **toggle**: the first press closes, so the gripper must
+start open for the first press to mean "close". Note that this homing **does not
+count as a received command**, so `target_ratio` in `status` remains `None`
+after boot (the contract wants the operator's most recent command). When the
+link is down or the gripper is uncalibrated, the target is discarded and the
+gripper stays limp. Pass `--no-startup-open` to disable it.
 
-**绝不静默停流**：母线静默 ~100ms 电机即自锁成 0xD 通信丢失故障（之后既读不到反馈也收不了命令）。
-所以掉线 / 过温 / 电机故障的出口都是**发零增益帧**（不是不发）—— 与 C++ 的 `safe_stop()` 同一条理由。
+**Never stop the stream silently**: with about 100 ms of bus silence the motor
+latches into a 0xD communication-loss fault (after which it can neither report
+feedback nor accept commands). Therefore every exit path (disconnect,
+over-temperature, motor fault) sends **zero-gain frames** (not silence), for the
+same reason as the C++ `safe_stop()`.
 
-依赖 `litegrip` SDK（脚本把 `~/sl/litegrip-python/src` 加进 `sys.path`，可用 `LITEGRIP_SDK`
-覆盖；装了包则无需设置）。SDK 需 JSON 标定文件描述行程，默认出厂标定；本机实测的标定要显式
-给出（`--calib PATH` / `--mount normal|reverse` / 环境变量 `LITEGRIP_CALIB`），**未标定会拒绝移动**。
+Depends on the `litegrip` SDK (the script adds `~/sl/litegrip-python/src` to
+`sys.path`; override with `LITEGRIP_SDK`; an installed package needs no
+setting). The SDK needs a JSON calibration file describing the travel; the
+factory calibration is the default. A calibration measured on this machine must
+be given explicitly (`--calib PATH` / `--mount normal|reverse` / environment
+variable `LITEGRIP_CALIB`); **it refuses to move when uncalibrated**.
 
-⚠️ 夹爪 CAN 需先 up（1Mbps classic）：`sudo ip link set can0 type can bitrate 1000000 && sudo ip link set can0 up`
+Note: the gripper CAN interface must be up first (1 Mbps classic):
+`sudo ip link set can0 type can bitrate 1000000 && sudo ip link set can0 up`
 
-## 灵巧手服务（`hand_server.py`）
+## Dexterous hand service (`hand_server.py`)
 
-L6 灵巧手由 `hand_server.py` 单独驱动，与臂的 follow server、夹爪服务并列（同属「收指令、驱电机」的硬件层）：
+The L6 hand is driven by `hand_server.py`, alongside the arm follow server and
+the gripper service (the same "receive command, drive motor" hardware layer):
 
 ```bash
-./run_hand_server.sh --can can0 --port 9004            # 真机灵巧手
+./run_hand_server.sh --can can0 --port 9004            # real hand
 ```
 
-协议：TCP，一行一条 JSON，`{"cmd":"close","side":"left"}` / `{"cmd":"open","side":"right"}` / `{"cmd":"ping"}`。
-`side` 为 `"left"` / `"right"`，即左右手各自握拳/张开。底层调 `hand_grasp` 的 `left_close/right_close/…`
-（**阻塞**，约 1.5s），故入队后由后台线程串行执行（左右手共用一条 CAN 总线，本就无法并行）。
-依赖 linkerbot SDK（`hand_grasp` + `src/`），由 `run_hand_server.sh` 压进 `PYTHONPATH`（默认
-`$HOME/sl/linkerbot-python-sdk-main`，可用 `LINKERBOT_SDK` 覆盖）。
+Protocol: TCP, one JSON object per line: `{"cmd":"close","side":"left"}` /
+`{"cmd":"open","side":"right"}` / `{"cmd":"ping"}`. `side` is `"left"` or
+`"right"`, so the two hands make a fist or open independently. It calls
+`hand_grasp`'s `left_close/right_close/...` (**blocking**, about 1.5 s), so a
+background thread executes queued commands serially (the two hands share one CAN
+bus and cannot run in parallel anyway). Depends on the linkerbot SDK
+(`hand_grasp` + `src/`), which `run_hand_server.sh` adds to `PYTHONPATH`
+(default `$HOME/sl/linkerbot-python-sdk-main`, override with `LINKERBOT_SDK`).
 
-⚠️ 灵巧手 CAN 需先 up（1Mbps classic）：`sudo ip link set can0 type can bitrate 1000000 && sudo ip link set can0 up`
+Note: the hand CAN interface must be up first (1 Mbps classic):
+`sudo ip link set can0 type can bitrate 1000000 && sudo ip link set can0 up`
 
-## 状态汇总服务（`status_aggregator.py`）
+## Status aggregator (`status_aggregator.py`)
 
-补齐**接收半边**：把臂 + 夹爪的实测状态（q/dq/tau/温度/故障、夹爪位置/扭矩/使能）
-**按臂身份分 topic** pub 到 Zenoh：
+This completes the **receive half**: it publishes the measured status of the arm
+and gripper (q/dq/tau/temperature/fault; gripper position/torque/enabled) to
+Zenoh, **split by arm identity**:
 
-| 设备 | topic |
+| Device | Topic |
 | --- | --- |
-| 臂 | `litearm/v4/{armA,armB}/vr_arm` |
-| 夹爪 | `litearm/v4/{armA,armB}/vr_grip` |
-| 灵巧手（v1 占位） | `litearm/v4/{armA,armB}/vr_hand` |
+| Arm | `litearm/v4/{armA,armB}/vr_arm` |
+| Gripper | `litearm/v4/{armA,armB}/vr_grip` |
+| Dexterous hand (v1 placeholder) | `litearm/v4/{armA,armB}/vr_hand` |
 
-中段 `armA`/`armB` 是**臂身份**，与 bridge 的话题契约 `litearm/v4/{arm_id}/{channel}` 对齐。
-**follow 服务不认识臂身份**——它只知道自己开的串口（回包 `port`）/ CAN 口（回包 `can`），
-永远不知道自己是左还是右。所以身份不能从回包推，必须**外部配进来**：
+The middle segment `armA`/`armB` is the **arm identity**, aligned with the
+bridge topic contract `litearm/v4/{arm_id}/{channel}`. **The follow service does
+not know its arm identity** — it only knows the serial port it opened (reply
+`port`) or the CAN interface (reply `can`), and never whether it is left or
+right. Identity therefore cannot be inferred from replies and must be
+**configured externally**:
 
 ```bash
-# armA=左臂: 串口 @ follow 端点；IFACE 只用于和回包对拍（对不上告警一次）
+# armA=left arm: serial @ follow endpoint; IFACE is only compared with the reply (warn once on mismatch)
 ./run_status_aggregator.sh \
-    --arm armA=/dev/serial/by-id/usb-…-if00@127.0.0.1:9001 \
-    --arm armB=/dev/serial/by-id/usb-…-if02@127.0.0.1:9002 \
+    --arm armA=/dev/serial/by-id/usb-...-if00@127.0.0.1:9001 \
+    --arm armB=/dev/serial/by-id/usb-...-if02@127.0.0.1:9002 \
     --gripper armA=can0@127.0.0.1:9003 --gripper armB=can1@127.0.0.1:9004
-./run_status_aggregator.sh --gripper none                       # 关夹爪
-./run_status_aggregator.sh --prefix litearm/v4                  # 改 topic 前缀
-python3 status_listen.py                                        # 通配订阅看看（调试用）
+./run_status_aggregator.sh --gripper none                       # disable the gripper
+./run_status_aggregator.sh --prefix litearm/v4                  # change the topic prefix
+python3 status_listen.py                                        # wildcard subscribe for debugging
 ```
 
-（前缀 `litearm/v4` 可用 `--prefix` 改；每条消息就是该设备的状态本体，不再套信封。
-早先合并成的**单条** `FollowStatus`（`litearm/v4/follow/status`）**已不再发布**。）
+(The prefix `litearm/v4` can be changed with `--prefix`; each message is the
+device status itself, with no envelope. The earlier merged **single**
+`FollowStatus` (`litearm/v4/follow/status`) is **no longer published**.)
 
-**只读**：只发 `ping` / `status`，**永不**发 `start`/`q`/`movej`/`home`/`close`/`open`，也**永不开**
-串口/CAN；可与遥操发送端并行跑，互不干扰（独立 TCP 连接）。
+**Read-only**: it only sends `ping` / `status`, **never** `start`/`q`/`movej`/
+`home`/`close`/`open`, and **never opens** the serial port or CAN interface. It
+can run alongside the teleoperation sender without interference (separate TCP
+connections).
 
-- **消息类型**：`status_msgs.py` 的 ROS 风格 `@dataclass`（`ArmStatus` / `GripperStatus` /
-  `HandStatus`；`FollowStatus` 合并封装仅留解析/测试），序列化走 `json.dumps(asdict(...))`
-  ——**非** ROS2 线格式，不可与真 ROS2 互操作。
-  臂 `ArmStatus` 归一化 stm32/sdk 两版 `ping`（`fault` 优先、回退 `flags`；`q` 仅当 `len==7` 才收）。
-- **臂身份 `arm_id`（topic 中段）**：`armA`/`armB`，由**桥的臂清单**给，配在 `--arm`/`--gripper`
-  的 `ARM_ID=` 里。follow 服务本身给不出这个 —— 它只知道串口。
-- **设备名 `device`**：payload 里的物理身份，取**回包里的串口/CAN 口**（臂 stm32 的 `port`，
-  如 `/dev/ttyACM0`；sdk 的 `iface`；夹爪的 `can`，如 `can0`），回包里没有才退回配置的接口。
-  与配置的 `IFACE` 对不上会**告警一次**（不阻断）。
-- **频率**：默认发布 100Hz / 臂 ping 100Hz / 夹爪 status 20Hz（`--publish-hz`/`--arm-hz`/`--gripper-hz`）。
-  夹爪走 `status` 缓存（零 CAN I/O），故 20Hz 无压力；臂 ping 读的是 SDK 缓存帧，很便宜。
-- **超时**：某设备超 `--stale-ms`（默认 1000）未更新 ⇒ 发布态置 `connected=false`，但**发布不停**；
-  链路断则 1s 内退避重连。
-- **Zenoh**：照搬 `litegrip` 的 `_base_config()`——`mode=peer` + 关多播 scouting/gossip + 显式
-  `listen`/`connect`。默认 `listen tcp/0.0.0.0:17449`（17447/17448 已被臂/夹爪遥操占用）。
-  订阅端必须知道这个端口（`--zenoh-listen/--zenoh-connect` 可改）。
+- **Message types**: ROS-style `@dataclass` in `status_msgs.py` (`ArmStatus` /
+  `GripperStatus` / `HandStatus`; the merged `FollowStatus` wrapper remains only
+  for parsing/tests). Serialisation is `json.dumps(asdict(...))` — **not** the
+  ROS2 wire format and not interoperable with real ROS2. `ArmStatus` normalises
+  the stm32 and sdk `ping` replies (`fault` first, fall back to `flags`; `q` is
+  accepted only when `len == 7`).
+- **Arm identity `arm_id` (topic middle segment)**: `armA`/`armB`, supplied by
+  the **bridge's arm list** through `ARM_ID=` in `--arm`/`--gripper`. The follow
+  service itself cannot provide it — it only knows the serial port.
+- **Device name `device`**: the physical identity in the payload, taken from the
+  reply's serial/CAN interface (the arm stm32 `port`, such as `/dev/ttyACM0`;
+  the sdk `iface`; the gripper `can`, such as `can0`), falling back to the
+  configured interface when the reply has none. A mismatch with the configured
+  `IFACE` produces **one warning** (not blocking).
+- **Rates**: publish 100 Hz / arm ping 100 Hz / gripper status 20 Hz by default
+  (`--publish-hz` / `--arm-hz` / `--gripper-hz`). The gripper uses the `status`
+  cache (zero CAN I/O), so 20 Hz is cheap; arm ping reads the SDK's cached
+  frames, also cheap.
+- **Timeouts**: when a device has not updated for `--stale-ms` (default 1000),
+  its published state sets `connected=false`, but **publishing continues**;
+  a broken link reconnects with a 1 s backoff.
+- **Zenoh**: uses the same `_base_config()` as `litegrip` — `mode=peer`, no
+  multicast scouting/gossip, explicit `listen`/`connect`. Default
+  `listen tcp/0.0.0.0:17449` (17447/17448 are already used by arm/gripper
+  teleoperation). Subscribers must know this port (`--zenoh-listen` /
+  `--zenoh-connect` can change it).
 
-依赖 `zenoh`（pip `eclipse-zenoh`；脚本缺它会报错退出）。
+Depends on `zenoh` (pip `eclipse-zenoh`; the script exits with an error if it is
+missing).
 
-## 对外协议
+## External protocol
 
-TCP，一行一条 JSON（`\n` 分隔）。上游（`litearm-vr-teleop` 的 `real_arm_client.py`、`litearm-vr-bridge`）按这份契约说话。
+TCP, one JSON object per line (`\n` separated). Upstreams (`real_arm_client.py`
+in `litearm-vr-teleop`, and `litearm-vr-bridge`) speak this contract.
 
-### 命令
+### Commands
 
-| 命令 | 作用 | 回包 |
+| Command | Effect | Reply |
 | --- | --- | --- |
-| `{"cmd":"start"}` | 开始跟随：使能 + 读当前角 + `following=True` | `{"ok":true,"cmd":"start","q":[7]}`；已在跟随则多一个 `"already":true`；使能失败 `{"ok":false,"error":…}` |
-| `{"cmd":"q","q":[7]}` | 一帧 7 关节角目标，逐帧跟随 | `{"ok":true,"cmd":"q"}` |
-| `{"cmd":"latch"}` | 就地持位 | `{"ok":true,"cmd":"latch"}` |
-| `{"cmd":"stop"}` | 急停 | `{"ok":true,"cmd":"stop"}` |
-| `{"cmd":"movej","q":[7]}` | 关节轨迹到位（**阻塞**到 `\|q-target\|<tol`） | `{"ok":bool,"cmd":"movej"}` |
-| `{"cmd":"home"}` | 回零位（**阻塞**到 `\|q\|≈0`） | — |
-| `{"cmd":"ping"}` | 探活 | 见下 |
+| `{"cmd":"start"}` | Start following: enable + read current angles + `following=True` | `{"ok":true,"cmd":"start","q":[7]}`; adds `"already":true` when already following; enable failure returns `{"ok":false,"error":...}` |
+| `{"cmd":"q","q":[7]}` | One frame of seven joint targets, followed per frame | `{"ok":true,"cmd":"q"}` |
+| `{"cmd":"latch"}` | Hold in place | `{"ok":true,"cmd":"latch"}` |
+| `{"cmd":"stop"}` | Emergency stop | `{"ok":true,"cmd":"stop"}` |
+| `{"cmd":"movej","q":[7]}` | Joint trajectory to target (**blocks** until `\|q-target\|<tol`) | `{"ok":bool,"cmd":"movej"}` |
+| `{"cmd":"home"}` | Return home (**blocks** until `\|q\|≈0`) | — |
+| `{"cmd":"ping"}` | Liveness probe | See below |
 
-`q` 与 `movej` 的区别：**`q` 是逐帧流的跟随目标**（高频、不阻塞），**`movej` 是一次性轨迹**（阻塞、等到位）。
+The difference between `q` and `movej`: **`q` is a per-frame streaming follow
+target** (high rate, non-blocking), while **`movej` is a one-shot trajectory**
+(blocking, waits for arrival).
 
-> `movej` / `home` 会**阻塞这条连接**。客户端要么给它单独的连接，要么接受这条连接在此期间没有响应。
+> `movej` / `home` **block this connection**. The client either uses a separate
+> connection or accepts that this connection is unresponsive meanwhile.
 
-### `ping` 的回包——两版字段不同
+### `ping` reply — fields differ between versions
 
-| 字段 | stm32 版 | sdk 版 |
+| Field | stm32 version | sdk version |
 | --- | --- | --- |
-| `state` | `mode_name`：`INIT` / `MOVE_J` / `MOVE_P` / `MOVE_JS` / `MOVE_MIT` / `MIT_ALL` / `EMERGENCY` | `ArmState.value`：`disconnected` / `moving` / `following` / … |
-| `flags` | ✅ 置位的 flag 名列表（健康时为空） | ✗ 无 |
-| `fault` | ✗ 无 | ✅ `[(joint, err), …]`（健康时为空） |
-| `q` | ✅ | ✅ |
-| `target` / `anchor` / `cmd_q` | ✅ | ✗ 无 |
-| `joints` | ✅ `[(q, dq, tau, t_mos, t_coil, err), …]`（每关节温度/故障） | ✗ 无 |
+| `state` | `mode_name`: `INIT` / `MOVE_J` / `MOVE_P` / `MOVE_JS` / `MOVE_MIT` / `MIT_ALL` / `EMERGENCY` | `ArmState.value`: `disconnected` / `moving` / `following` / ... |
+| `flags` | Yes: list of set flag names (empty when healthy) | No |
+| `fault` | No | Yes: `[(joint, err), ...]` (empty when healthy) |
+| `q` | Yes | Yes |
+| `target` / `anchor` / `cmd_q` | Yes | No |
+| `joints` | Yes: `[(q, dq, tau, t_mos, t_coil, err), ...]` (per-joint temperature/fault) | No |
 
-消费方要**两个都认**：`fault` 取不到就回退 `flags`。两者语义一致——健康时都是空列表，非空即有故障。
+Consumers must **accept both**: fall back to `flags` when `fault` is absent.
+Their semantics match — both are empty when healthy and non-empty on a fault.
 
-## 依赖：`arm_console.py`
+## Dependency: `arm_console.py`
 
-stm32 版有 `from arm_console import (LiteArm, CMD_…)`，这个文件**不在本仓库**，来自
-[`litearm-stm32`](https://gitee.com/yudao_hz_1/litearm-stm32) 仓库的 `tools/` 目录
-（STM32 0xA5 协议封装 + `LiteArm` 串口类）。
+The stm32 version imports `from arm_console import (LiteArm, CMD_...)`. That file
+is **not in this repository**; it comes from the `tools/` directory of the
+[`litearm-stm32`](https://gitee.com/yudao_hz_1/litearm-stm32) repository (the
+STM32 0xA5 protocol wrapper plus the `LiteArm` serial class).
 
-代码找 import 的顺序是**先看自己所在目录，再走 `PYTHONPATH`**，所以两种放法都行：
+Imports are resolved **first in the script's own directory, then through
+`PYTHONPATH`**, so either placement works:
 
 ```bash
-# 法一：PYTHONPATH（run_stm32_server.sh 用的就是这个）
+# Option 1: PYTHONPATH (what run_stm32_server.sh does)
 export PYTHONPATH=/path/to/litearm-stm32/tools:$PYTHONPATH
 
-# 法二：把 arm_console.py 直接放到本目录旁边
+# Option 2: copy arm_console.py next to this directory
 ```
 
-> `run_stm32_server.sh` / `run_stm32_comm_test.sh` 按这个顺序找 `tools` 目录：
-> `$LITEARM_TOOLS` → 同级目录的 `litearm-stm32/tools` → `~/sl/litearm-stm32/tools`。
-> 三者都对不上时脚本报错退出——此时把 `LITEARM_TOOLS` 指过去即可。
+> `run_stm32_server.sh` / `run_stm32_comm_test.sh` look for the `tools`
+> directory in this order: `$LITEARM_TOOLS` -> a sibling `litearm-stm32/tools`
+> -> `~/sl/litearm-stm32/tools`. When none matches, the script exits with an
+> error; point `LITEARM_TOOLS` at it.
 
-sdk 版依赖 `pylitearm`（走 `can0`）。`run_sdk_server.sh` 里有一段对 cmeel `pin 4.1.0` 的路径处理，
-注释写了原因：绕开 ROS humble 自带的、按 numpy 1.x 编译的旧版 pinocchio。
+The sdk version depends on `pylitearm` (over `can0`). `run_sdk_server.sh`
+contains path handling for cmeel `pin 4.1.0`; the comment explains why: to
+bypass the old pinocchio shipped with ROS Humble and built against numpy 1.x.
 
-## 运行
+## Running
 
 ```bash
-# 日常：改 follow.yaml 即可，直接跑
+# Everyday use: edit follow.yaml and run
 ./run_sdk_server.sh
 ./run_gripper_server.sh
 ./run_hand_server.sh
 ./run_status_aggregator.sh
 
-# 临时覆盖（命令行 > follow.yaml）
-./run_stm32_server.sh --mode js --tcp-port 9001               # 免调增益
-./run_sdk_server.sh  --dry-run                                # 无硬件验协议
+# Temporary overrides (command line > follow.yaml)
+./run_stm32_server.sh --mode js --tcp-port 9001               # skip gain tuning
+./run_sdk_server.sh  --dry-run                                # verify the protocol without hardware
 ```
 
-`--mode` 四选一，对应固件的四种跟随方式：`jf`（joint follow，**默认**）/ `js` / `j` / `mit`。
+`--mode` has four choices matching the firmware's four follow methods: `jf`
+(joint follow, **default**) / `js` / `j` / `mit`.
 
-⚠️ **串口独占**：跑服务时别同时 `cat /dev/ttyACM0`，或用 `arm_console` 占着串口。
+Note: **the serial port is exclusive**. Do not run `cat /dev/ttyACM0` or leave
+`arm_console` holding the port while the service runs.
 
-## 安全相关的坑（踩过，别改回去）
+## Safety pitfalls (learned the hard way, do not undo)
 
-- **`latch` 必须走 `movej` 到当前角**，让固件在 `MOVE_J` 到位后增刚持位。
-  **不能用 `move_js` 持位**——它内置的积分前馈在静止态会累积稳态误差，导致极限环震荡。
-- `stop` 走固件的 `EMERGENCY_STOP`。
-- 目标角超出关节限位时会被 clamp 到限位内并打日志（限流 2s 一条），不会硬撞限位。
+- **`latch` must use `movej` to the current angles**, so the firmware increases
+  stiffness after arriving in `MOVE_J`. **Do not use `move_js` to hold** — its
+  integral feedforward accumulates steady-state error at rest and causes a limit
+  cycle.
+- `stop` uses the firmware's `EMERGENCY_STOP`.
+- Targets outside the joint limits are clamped into range and logged (rate
+  limited to one line per 2 s); they never drive hard into a limit.
 
-## 来源
+## Origin
 
-内容拆自 `vr` 聚合仓库（`e3c9145` 于 2026-09-16 创建，`dbebe58` 于 2026-10-14 更新）；
-夹爪服务原为工控机上的 `gripper_server_can.py`，2026-10-15 收编入本仓为 `gripper_server.py`
-（同日改用 `litegrip-python` SDK 驱动，弃用手写的 `damiao_socketcan` 闭环）；
-灵巧手原为 teleop 仓的 `scripts/hand_control.py`（本地 CAN 驱动），同日按同规则迁入本仓为 `hand_server.py`。
-`status_aggregator.py` / `status_msgs.py` / `status_listen.py` 为 2026-10-15 新增（状态汇总 + Zenoh 发布），
-并给 `arm_follow_server_stm32.py`（ping 加 `joints`）与 `gripper_server.py`（加 `status` 缓存读取）做了**仅新增字段**的小改。
-此后本仓库是这些文件的唯一归宿，`vr` 仓库已搁置。
+The content was split out of the `vr` aggregate repository (`e3c9145` created
+2026-09-16, `dbebe58` updated 2026-10-14). The gripper service was originally
+`gripper_server_can.py` on the industrial PC and was folded into this repository
+as `gripper_server.py` on 2026-10-15 (the same day it switched to the
+`litegrip-python` SDK instead of the hand-written `damiao_socketcan` loop). The
+dexterous hand was originally `scripts/hand_control.py` in the teleop repository
+(local CAN driver) and moved here the same day as `hand_server.py` under the
+same rules. `status_aggregator.py` / `status_msgs.py` / `status_listen.py` were
+added on 2026-10-15 (status aggregation plus Zenoh publishing), with
+**additive-only** small changes to `arm_follow_server_stm32.py` (`joints` in
+ping) and `gripper_server.py` (`status` cache reads). Since then this repository
+is the only home for these files; the `vr` repository is dormant.
 
-### 遥操实测反馈与不切模式保持
+### Teleoperation feedback and hold without switching modes
 
-`{"cmd":"state","request_id":123}` 是只读查询，不使能、不回零。回复含
-`cmd=state`、原样 `request_id`、`valid`、`q`（7 个实测关节角，弧度）和
-`age_s`。无效时 `q/age_s` 为 null，绝不返回 `target/cmd_q` 充当实测值。
-STM32 在连续查询观察到固件状态序号推进后才有效；250 ms 未推进或查询中断后
-重新验证。SDK 路径要求 `get_state()` 提供全部 7 轴的
-`feedback.joints[].fresh/age_s`，缺失该元数据的旧 SDK 明确返回无效。
+`{"cmd":"state","request_id":123}` is a read-only query: it does not enable or
+home anything. The reply contains `cmd=state`, the unchanged `request_id`,
+`valid`, `q` (seven measured joint angles in radians), and `age_s`. When
+invalid, `q`/`age_s` are null; `target`/`cmd_q` are never returned as if they
+were measurements. On STM32 the value becomes valid only after consecutive
+queries observe the firmware status sequence advance; it is re-validated after
+250 ms without progress or after an interrupted query. The SDK path requires
+`get_state()` to provide `feedback.joints[].fresh/age_s` for all seven axes; an
+older SDK without that metadata explicitly returns invalid.
 
-`{"cmd":"hold"}` 丢弃远处的旧遥操目标，优先保持新鲜实测角度；反馈不可用时
-保持当前实际下发的指令。保持现有跟随模式与增益，不调用 movej、不重使能。
-STM32 清除速度前馈；SDK 保持原有 joint_follow 循环（无反馈时 provider 返回
-None，依 SDK 原有约定保持当前 q_cmd）。此命令用于 grip 松开或遥操输入失效。
+`{"cmd":"hold"}` discards a distant old teleoperation target and prefers a fresh
+measured angle; when feedback is unavailable it holds the currently commanded
+values. It keeps the existing follow mode and gains and never calls movej or
+re-enables. STM32 clears the velocity feedforward; the SDK keeps its
+joint_follow loop (with no feedback the provider returns None and the SDK's
+existing convention holds the current `q_cmd`). This command is used when grip
+is released or teleoperation input becomes invalid.
 
-遥操客户端通过 `request_state(side)`（内部限制 20 Hz）异步查询，
-`get_state(side, max_age=0.25)` 返回有效实测状态或 None。客户端同时计入服务端
-反馈年龄与请求往返时间，并在断线时立即清除缓存。部署须同时更新服务端与客户端；
-不支持新查询或不能证明反馈新鲜度的后端不会被当成闭环测量来源。
+The teleoperation client queries asynchronously through `request_state(side)`
+(internally limited to 20 Hz); `get_state(side, max_age=0.25)` returns a valid
+measured state or None. The client accounts for both the server-reported
+feedback age and the request round-trip time, and clears the cache immediately
+on disconnect. Deployment must update the server and client together; a backend
+that does not support the new query or cannot prove feedback freshness is not
+used as a closed-loop measurement source.
 
-`hold`重复发送保持第一次选定的位置，不会每次跟随测量噪声重新锚定；客户端在保持
-期间通过后台查询周期重发hold保活。SDK跟随目标超过250ms未更新也清除旧目标。
-SDK只读预连接需要`connect(read_only=True)`；start时转换为正常连接。
+Repeated `hold` commands keep the position selected by the first one and do not
+re-anchor on every measurement-noise sample; during a hold the client resends
+hold as a keep-alive through its background query cycle. On the SDK path a
+follow target not updated for more than 250 ms also clears the old target.
+The SDK read-only pre-connection requires `connect(read_only=True)`; `start`
+converts it to a normal connection.
