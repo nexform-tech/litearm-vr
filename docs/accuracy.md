@@ -51,6 +51,29 @@ These thresholds are for catching regressions, not for customer acceptance. Conf
 | `E_exec` median | > 20 mm | > 30 mm |
 | `E_rot` median | > 8° | > 12° |
 
+## Tool offset
+
+The factory default is `tcp_offset = 0`: the operator controls the flange origin. With a gripper or a tool fitted, the point you want to control is usually the grasp point further along the tool axis. The offset moves the controlled point:
+
+`p_flange = p_tcp − R_target @ tcp_offset`
+
+so a pure wrist rotation rotates the tool point around itself instead of translating it.
+
+Set it in one of two places:
+
+- `teleop/config/teleop.yaml` → `tuning.tcp_offset: [0.0, 0.0, 0.18]` (metres, tool frame; `0.18` is the bench gripper's flange-to-grasp distance — replace it with your tool's).
+- `--tcp-offset 0 0 0.18` on the command line for a one-off run.
+
+To calibrate a new tool:
+
+1. Fit the tool and home the arm.
+2. Measure the distance from the flange face to the intended grasp point along the tool +z axis in metres; a few millimetres of error is acceptable.
+3. Set `tuning.tcp_offset` to `[0, 0, d]` and restart teleop.
+4. Check the preview: the controlled point should sit at the grasp point, and a pure wrist rotation should turn the tool around that point, not around the flange.
+5. Check on the arm: approach a fixed mark vertically with the tool point; the tool point should stop at the mark. If the flange stops at the mark, the axis or the sign is wrong.
+
+The metrics on this page are flange-point values. A non-zero offset adds a lever arm: the same joint-space error becomes a larger Cartesian error at the tool point, so measure again with the tool fitted when you need tool-point figures.
+
 ## Reproducing the measurement
 
 Start teleop with the probe enabled and sample the follow service in a second terminal:
