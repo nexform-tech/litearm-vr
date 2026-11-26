@@ -1,136 +1,161 @@
-# 部署与运行
+English | [简体中文](DEPLOY.zh-CN.md)
 
-> 配置项定义见 [DESIGN.md](DESIGN.md) 第 7 节；本文只讲"怎么把它跑起来、怎么确认它是对的"。
+# Deployment and operation
 
-## 1. 依赖与安装
+> Configuration keys are defined in [DESIGN.md](DESIGN.md) section 7; this page
+> only covers how to run the service and how to confirm it is correct.
 
-本服务只需要 Python 3.10+ 和 `websockets>=13`（`websockets.asyncio.*` 与
-`websockets.http11` 是 13 起才有的 API，装 12 会 import 失败）。
+## 1. Dependencies and installation
 
-**上游两个仓库是 submodule，clone 时要带上**（没有它们，桥起来了也没东西可托管）：
+The service needs only Python 3.10+ and `websockets>=13` (`websockets.asyncio.*`
+and `websockets.http11` exist from 13 onward; version 12 fails to import).
+
+**The two upstream repositories are submodules and must be cloned** (without
+them the bridge runs but has nothing to manage):
 
 ```bash
 git clone --recursive git@gitee.com:yudao_hz_1/litearm-vr-bridge.git
-git submodule update --init          # 已经 clone 过、但没带 --recursive 的话补这一条
+git submodule update --init          # add this if the clone was made without --recursive
 ```
 
 ```bash
-# 方式 A：一条命令装好（拉 submodule + 建 venv + 写 env + 装 systemd + 开机自启）
+# Option A: one command (pull submodules + create venv + write env + install systemd + enable at boot)
 sudo ./scripts/install.sh
-./scripts/install.sh --user          # 图形会话 / 没有 sudo 时改装用户级服务
+./scripts/install.sh --user          # graphical session / no sudo: install a user-level service
 
-# 方式 B：直接跑源码（开发、排障）
+# Option B: run from source (development, troubleshooting)
 cd /opt/litearm/litearm-vr-bridge
 python3 -m pip install --user "websockets>=13"
-PYTHONPATH=src python3 -m litearm_vr_bridge --print-config   # 先看生效配置
-PYTHONPATH=src python3 -m litearm_vr_bridge --doctor         # 再体检
-PYTHONPATH=src python3 -m litearm_vr_bridge                  # 正式启动
+PYTHONPATH=src python3 -m litearm_vr_bridge --print-config   # show the effective configuration
+PYTHONPATH=src python3 -m litearm_vr_bridge --doctor         # preflight
+PYTHONPATH=src python3 -m litearm_vr_bridge                  # start the service
 
-# 方式 C：装成包（得到 litearm-vr-bridge 命令）
+# Option C: install as a package (provides the litearm-vr-bridge command)
 python3 -m pip install --user .
 litearm-vr-bridge
 ```
 
-跑测试（stdlib unittest，不需要 pytest）：
+Run the tests (stdlib unittest, no pytest required):
 
 ```bash
-PYTHONPATH=src python3 -m unittest discover -s tests -t .    # 126 项
+PYTHONPATH=src python3 -m unittest discover -s tests -t .    # 126 items
 ```
 
-## 2. 上游怎么起：交给它们自己的启动脚本
+## 2. How the upstreams start: their own launch scripts
 
-两个上游都是 submodule，桥**不自己拼它们的命令行**，而是调它们自己的启动脚本：
+Both upstreams are submodules, and the bridge **does not assemble their command
+lines**; it calls their own launch scripts:
 
 ```
-submodules/litearm-vr-teleop/teleop/launch/run_teleop_webxr.py  ← 桥把 --host/--port/--viewer/--real… 拼给它
-submodules/litearm-vr-follow/run_stm32_server.sh                ← 桥把 --host/--tcp-port/--mode/--port 透传
+submodules/litearm-vr-teleop/teleop/launch/run_teleop_webxr.py  <- the bridge passes --host/--port/--viewer/--real...
+submodules/litearm-vr-follow/run_stm32_server.sh                <- the bridge passes --host/--tcp-port/--mode/--port through
 ```
 
-这样 conda 环境（`TELEOP_SERVER_PY` → 已激活的 metavr-arm → `conda info --base` → 常见根）、
-`arm_console.py`（`LITEARM_TOOLS`）、ROS2、灵巧手/夹爪 SDK 的解析只有上游那一份 —— 现场
-"手工起得来、服务起不来"这类故障因此少掉一大类。要覆盖这些路径，就在 env 文件里
-export 上游认的变量，受管子进程原样继承。
+This keeps the knowledge of the conda environment (`TELEOP_SERVER_PY` ->
+activated metavr-arm -> `conda info --base` -> common roots), `arm_console.py`
+(`LITEARM_TOOLS`), ROS2, and hand/gripper SDKs in one place upstream, removing a
+whole class of "starts by hand but not as a service" failures on site. To
+override those paths, export the variables the upstreams read in the env file;
+managed child processes inherit them unchanged.
 
-手工跑（排障时）与桥起的是同一条路径：
+Running by hand (during troubleshooting) uses the same path as the bridge:
 
 ```bash
-# 以前：头显直连 teleop 的 8765
+# Before: the headset connected directly to teleop's 8765
 submodules/litearm-vr-teleop/teleop/launch/run_teleop_webxr.py --port 8765
 
-# 现在：头显连桥的 8765，桥逐帧转发给 teleop 的 8766
+# Now: the headset connects to the bridge's 8765, and the bridge forwards frames to teleop's 8766
 submodules/litearm-vr-teleop/teleop/launch/run_teleop_webxr.py --port 8766
 ```
 
-**上游不需要改代码**（`--port` 是它自己的开关，launcher 也认）。头显 3D 面板里填的地址
-仍然是 `ws://<本机IP>:8765`，不用动。
+**The upstream needs no code change** (`--port` is its own switch, and the
+launcher accepts it). The address entered in the headset's 3D panel remains
+`ws://<local-IP>:8765`.
 
-> 第一次接到真机械臂上，按 [REAL-ARM-BRINGUP.md](REAL-ARM-BRINGUP.md) 走：
-> 先定机器（谁的 USB 口、conda 环境在哪、头显够不够得着），再一档一档往上推。
+> For the first real-arm connection follow
+> [REAL-ARM-BRINGUP.md](REAL-ARM-BRINGUP.md): decide on the machine first
+> (whose USB port, where the conda environment lives, whether the headset can
+> reach it), then advance stage by stage.
 
-### 托管到 systemd 下的几个注意
+### Notes on running under systemd
 
-上游脚本是给"有人坐在机器前面"写的，托管起来有三处要心里有数（都不致命，但现场会撞上）：
+The upstream scripts are written for "a person sitting in front of the machine",
+so three things need attention when managed (none fatal, all encountered on
+site):
 
-- **`run_teleop_webxr.sh` 启动时会 `pkill -f ws_echo_server`**：它会先清掉同名进程。
-  桥这边通常是收掉自己上次拉起的那个；但你要是同时手工开了一个在排障，会被一起清掉。
-- **灵巧手 / 夹爪的 CAN 是上游脚本 `sudo ip link set ...` 配的**：systemd 服务里不一定有
-  `sudo`（也不该有）。启用 `TELEOP_HAND` / `TELEOP_GRIPPER` 前，先把接口配好：
-  `sudo ip link set can0 up type can bitrate 1000000`（已经 UP 的它不会重复配）。
-- **ROS2 发布由上游决定**：源到 `/opt/ros/humble/setup.bash` 且 `rclpy` 可用时，teleop 会
-  发 `/joint_states`（没有就自己警告跳过）。桥这边**没有**关掉它的旋钮了 —— 需要的话得在
-  上游脚本上加一个，这属于上游的事。
+- **`run_teleop_webxr.sh` runs `pkill -f ws_echo_server` at startup**: it clears
+  processes with the same name first. Normally the bridge is stopping the one it
+  started last time; if you are also running one manually for debugging, it is
+  cleared too.
+- **The hand/gripper CAN interfaces are configured by the upstream scripts with
+  `sudo ip link set ...`**: a systemd service does not necessarily have `sudo`
+  (and should not). Before enabling `TELEOP_HAND` / `TELEOP_GRIPPER`, configure
+  the interface first:
+  `sudo ip link set can0 up type can bitrate 1000000` (already-up interfaces are
+  left alone).
+- **ROS2 publication is decided upstream**: when `/opt/ros/humble/setup.bash` is
+  sourced and `rclpy` is available, teleop publishes `/joint_states` (otherwise
+  it warns and skips). The bridge has **no** knob to disable it; adding one is an
+  upstream change.
 
-## 3. systemd 常驻
+## 3. systemd persistence
 
-一条命令（会建 venv、把单元里的 `/opt` 路径换成实际路径、生成 env 文件）：
+One command (creates the venv, replaces the `/opt` paths in the unit with the
+real paths, and generates the env file):
 
 ```bash
-sudo ./scripts/install.sh                    # 系统服务
-./scripts/install.sh --user                  # 用户级服务（systemctl --user）
+sudo ./scripts/install.sh                    # system service
+./scripts/install.sh --user                  # user-level service (systemctl --user)
 ```
 
-手工装的话：
+Manual installation:
 
 ```bash
 sudo cp deploy/litearm-vr-bridge.service /etc/systemd/system/
 sudo cp deploy/bridge.env.example /etc/litearm-vr-bridge.env
-sudoedit /etc/litearm-vr-bridge.env          # 至少确认 FOLLOW_SERVER_MODE 与串口/CAN 口
-                                             # （上游不在 submodule 里才需要 TELEOP_REPO/FOLLOW_REPO）
+sudoedit /etc/litearm-vr-bridge.env          # at least confirm FOLLOW_SERVER_MODE and the serial/CAN port
+                                             # (TELEOP_REPO/FOLLOW_REPO are needed only when the upstreams are outside the submodules)
 sudo systemctl daemon-reload
 sudo systemctl enable --now litearm-vr-bridge
 systemctl status litearm-vr-bridge
 journalctl -u litearm-vr-bridge -f
 ```
 
-单元文件里 `KillMode=mixed` 是刻意的：停止服务时先让桥自己走完
-"若在跟随 → 先 latch 就地持位 → 再收掉 teleop / 跟随服务"这段流程。
+`KillMode=mixed` in the unit is deliberate: stopping the service lets the bridge
+finish "if following -> latch in place first -> then stop teleop / the follow
+service" before the rest are signalled.
 
-**系统服务 vs 用户服务。** teleop 的 pybullet 窗口（`TELEOP_VIEWER=gui`）要在图形会话里
-才打得开，而系统服务默认没有 `DISPLAY`。`install.sh` 会把当前会话的 `DISPLAY`/`XAUTHORITY`
-写进 drop-in；手工装就自己加，或者干脆用 `--user`（用户级服务天然继承图形会话，
-再补一句 `loginctl enable-linger $USER` 就能开机自启）。
+**System service vs user service.** teleop's pybullet window
+(`TELEOP_VIEWER=gui`) opens only in a graphical session, and a system service
+has no `DISPLAY` by default. `install.sh` writes the current session's
+`DISPLAY`/`XAUTHORITY` into a drop-in; a manual install must add them, or use
+`--user` (a user service inherits the graphical session, and
+`loginctl enable-linger $USER` makes it start at boot).
 
-**env 文件的格式**：`KEY=VALUE`，一行一个，注释要**单独占一行**（不支持行尾注释），
-值里有空格可加引号。这不是随便定的 —— systemd 的 `EnvironmentFile=` 就是这么读的，
-`up.sh` 用的是同一套语义，两边必须一致。别写 `$(...)`：那不是 shell。
+**Env file format**: `KEY=VALUE`, one per line, comments must occupy a **whole
+line** (trailing comments are not supported), and values containing spaces may
+be quoted. This is not arbitrary — systemd's `EnvironmentFile=` reads it this
+way, and `up.sh` uses the same semantics; both must agree. Do not write
+`$(...)`: this is not a shell.
 
-⚠ 早期版本的 `bridge.env.example` 带行尾注释，配上 `EnvironmentFile=` 会把注释也当成值，
-`TELEOP_SIDE` 这类选项会被**静默忽略**（解析不出就退回默认值）。已修，但现场要是从旧文件
-拷过来的，记得核一遍。
+Note: early versions of `bridge.env.example` had trailing comments, and with
+`EnvironmentFile=` the comments became part of the value, silently ignoring
+options such as `TELEOP_SIDE` (an unparsable value falls back to the default).
+That is fixed, but re-check any file copied from an old installation.
 
-## 4. 冒烟检查（现场几步）
+## 4. Smoke checks (on site)
 
 ```bash
-# ⓪ 启动前体检：端口 / 上游脚本 / 参数对拍 / 串口或 CAN / 依赖 / 图形会话
+# 0. Preflight: ports / upstream scripts / argument checks / serial or CAN / dependencies / graphical session
 ./scripts/up.sh --check-only
 
-# ① 桥活着吗（HTTP，不是 WebSocket）
+# 1. Is the bridge alive? (HTTP, not WebSocket)
 curl -s http://127.0.0.1:8765/healthz | python3 -m json.tool
 
-# ①' 或者让桥自己讲：链路状态、头显、机械臂、进程、兜底、最近的告警
+# 1'. Or let the bridge report: link state, headset, arm, processes, fallback, recent alarms
 ./scripts/up.sh --status
 
-# ② 上位机视角的状态流（zenoh；client 直连桥，不需要 router）
+# 2. Status stream from the host application's perspective (zenoh; the client connects directly, no router)
 python3 - <<'PY'
 import json, zenoh
 cfg = zenoh.Config()
@@ -149,75 +174,102 @@ for snap in seen[-3:]:
 session.close()
 PY
 
-# ③ 头显连上后，这里应看到 fps≈90、last_frame_age_ms 个位数
+# 3. After the headset connects, expect fps ~90 and a single-digit last_frame_age_ms
 ```
 
-判读要点：
+Interpretation:
 
-| 现象 | 含义 |
+| Symptom | Meaning |
 | --- | --- |
-| `bridge.forward_cost_ms` > 1ms | 本服务自己卡了（CPU/日志/被抢） |
-| `headset.latency_ms` 变大而 `forward_cost_ms` 正常 | 慢在头显或无线段 |
-| `headset.online=false` 且 `last_frame_age_ms` 持续涨 | 头显掉线/断连 |
-| `fallback.active=true` | 已超过 500ms 没帧，机械臂被 hold 就地保持 |
-| `link.forward_enabled=false` | 有人按了"停止遥操"（头显还在推，但一个字都不转发） |
+| `bridge.forward_cost_ms` > 1 ms | This service is stalled (CPU, logging, contention) |
+| `headset.latency_ms` grows while `forward_cost_ms` is normal | The delay is in the headset or the wireless link |
+| `headset.online=false` with `last_frame_age_ms` rising | The headset dropped or disconnected |
+| `fallback.active=true` | No frame for over 500 ms; the arm is held in place |
+| `link.forward_enabled=false` | Someone pressed "stop teleoperation" (the headset still sends, but nothing is forwarded) |
 
-## 5. 冷启动到可遥操（M3）
+## 5. Cold start to teleoperation (M3)
 
 ```bash
-./scripts/up.sh            # 起桥 → 预检 → 打印头显该填的地址
-./scripts/up.sh --link     # 接真机：发 teleop.start，按配置拉起上游
+./scripts/up.sh            # start the bridge -> preflight -> print the headset address
+./scripts/up.sh --link     # real-arm chain: send teleop.start and start the upstreams per configuration
 ```
 
-两个上游默认从 submodule 里取，所以不用配路径；放在别处时给 `TELEOP_REPO` /
-`FOLLOW_REPO`（或两个 `*_CMD`）。
+Both upstreams default to the submodules, so no paths are needed; when they live
+elsewhere set `TELEOP_REPO` / `FOLLOW_REPO` (or the two `*_CMD` variables).
 
-`--link` 之后桥会依次（`bridge.handle_action` 的 `teleop.start` 分支）：
+After `--link`, the bridge performs these steps in order (the `teleop.start`
+branch of `bridge.handle_action`):
 
-1. 拉起 `follow_server`（9001），**并等它的端口真的能连上**再往下走
-   （真机上它要等 STM32 状态帧，要几秒；这一步顺序错了 `start` 会打在没监听的端口上丢掉）；
-2. 拉起 `teleop`（8766）—— 接真机（`--real`）时会先回一条黄色警告事件；
-   teleop 启动**不会自动 home**，首次按 grip 才 movej 回 q_home 再跟随；
-3. 打开帧转发，并向跟随服务下发 `start`；
-4. 操作员戴上头显、按右手 grip 开始跟随。
+1. Start `follow_server` (9001) and **wait until its port really accepts
+   connections** before continuing (on real hardware it waits for an STM32
+   status frame, which takes seconds; doing this out of order sends `start` to a
+   port with no listener and loses it).
+2. Start `teleop` (8766) — with the real arm (`--real`) it first emits a yellow
+   warning event; teleop **does not home automatically** at startup, and only
+   the first grip press sends `movej` back to `q_home` before following.
+3. Open frame forwarding and send `start` to the follow service.
+4. The operator puts on the headset and presses the right grip to start
+   following.
 
-> `up.sh` 默认只在**仿真**时自动做这一步；生成的 teleop 命令带 `--real` 时会停下来，
-> 让你确认工作区无人、急停在手之后再敲 `--link`。想让桥完全不托管上游进程，把
-> `TELEOP_CMD=` / `FOLLOW_SERVER_CMD=` 显式留空即可。
+> By default `up.sh` performs this step automatically only in **simulation**;
+> when the generated teleop command carries `--real`, it stops and asks you to
+> confirm the workspace is clear and the emergency stop is within reach before
+> running `--link`. To keep the bridge away from the upstream processes
+> entirely, set `TELEOP_CMD=` / `FOLLOW_SERVER_CMD=` explicitly empty.
 
-> 不想让 teleop 碰真机：把 `TELEOP_ARM_HOST=` 显式留空，它就只跑 pybullet 仿真。
+> To keep teleop away from the real arm: set `TELEOP_ARM_HOST=` explicitly
+> empty, and it runs pybullet simulation only.
 
-**再次进入遥操**（`--ctl down`、`teleop.stop` 或急停之后）：再发 `teleop.start`
-（`./scripts/up.sh --link` 或 `--ctl up`）只会打开帧转发，状态流里会回一条
-`teleop_start_needs_regrip`；teleop 还握着上一次的锚点，必须由操作员**重新按一次
-grip**（松 → 按）才会重新锚定并继续跟随。头显掉线兜底后的恢复同理。这样设计是为了避免
-"按旧锚点突然追上手柄"的跳跃。
+**Re-entering teleoperation** (after `--ctl down`, `teleop.stop`, or an
+emergency stop): sending `teleop.start` again (`./scripts/up.sh --link` or
+`--ctl up`) only opens frame forwarding and returns a
+`teleop_start_needs_regrip` event in the status stream; teleop still holds the
+previous anchor, so the operator must **press grip again** (release, then press)
+to re-anchor and continue following. Recovery after a headset dropout works the
+same way. This avoids the jump of "chasing the controller from an old anchor".
 
-## 6. 排障
+## 6. Troubleshooting
 
-先跑 `./scripts/up.sh --check-only`：端口、submodule、两种对拍、串口/CAN、依赖、DISPLAY 都能一次问清。
+Run `./scripts/up.sh --check-only` first: ports, submodules, both argument
+checks, serial/CAN, dependencies, and DISPLAY are all reported at once.
 
-- **头显连不上**：确认 `BRIDGE_PORT` 没被占用、防火墙放行、头显面板地址是 `<本机IP>:8765`。
-- **上游起不来**：看 `processes_detail` 里的 `exit_code` 和 `PROCESS_LOG_DIR/<name>.log` ——
-  上游启动脚本自己的报错（"未找到 arm_console.py"、"找不到 metavr-arm 环境的 python"）
-  就落在那个日志里，照着修即可。
-- **`--doctor` 报 `env:teleop` / `flags:follow_server`**：我们传给上游的参数（或设的环境变量）
-  它不认了 —— 多半是 submodule 被就地改过，或上游换了接口；预检会点名是哪几个。
-- **`--link` 报"跟随服务没接受 start"**：follow_server 起来了但没在听 9001（崩了、
-  串口没接、或还在等 STM32 状态帧超过 8 秒）。它的日志在 `PROCESS_LOG_DIR/follow_server.log`。
-- **状态页有 fps 但机械臂不动**：看 `link.forward_enabled`（是不是被停了）、
-  `bridge.teleop_connected`（转发目标在不在）、`arm.state`（跟随服务认没认 `start`）。
-- **一直不出兜底告警**：检查 `FALLBACK_ENABLED`；快照里 `fallback.guard_enabled` 会如实反映。
-- **`process.*` 返回"未配置"**：两条路都没有 —— 既没 init submodule（`git submodule
-  update --init`）也没给 `TELEOP_REPO` / `FOLLOW_REPO`；或者这个进程的 `*_CMD` 被显式留空
-  （见 env 示例第 4 节注释）。
-- **跟随服务一直 ping 失败**：`arm.error` 里有原因（连接被拒 / 超时 / 回包非法）。
-- **日志太吵**：`LOG_LEVEL=WARNING`；跟随服务不可用时的失败日志本身已限流到 5s 一条。
+- **The headset cannot connect**: confirm `BRIDGE_PORT` is free, the firewall
+  allows it, and the headset panel address is `<local-IP>:8765`.
+- **An upstream does not start**: check `processes_detail` for `exit_code` and
+  `PROCESS_LOG_DIR/<name>.log` — the upstream launch script's own errors
+  ("arm_console.py not found", "cannot find the metavr-arm environment python")
+  are in that log; fix them there.
+- **`--doctor` reports `env:teleop` / `flags:follow_server`**: the upstream no
+  longer accepts the arguments (or environment variables) we pass — usually a
+  submodule modified in place, or an upstream interface change; the preflight
+  names the specific items.
+- **`--link` reports "the follow service did not accept start"**: follow_server
+  started but is not listening on 9001 (crashed, serial port missing, or still
+  waiting for an STM32 status frame for more than 8 s). Its log is in
+  `PROCESS_LOG_DIR/follow_server.log`.
+- **The status page shows fps but the arm does not move**: check
+  `link.forward_enabled` (stopped?), `bridge.teleop_connected` (is the forwarding
+  target present?), and `arm.state` (did the follow service accept `start`?).
+- **No fallback alarm ever appears**: check `FALLBACK_ENABLED`;
+  `fallback.guard_enabled` in the snapshot reports it faithfully.
+- **`process.*` returns "not configured"**: neither path is available — the
+  submodules were not initialised (`git submodule update --init`) and
+  `TELEOP_REPO` / `FOLLOW_REPO` were not given; or that process's `*_CMD` was
+  set explicitly empty (see the notes in section 4 of the env example).
+- **The follow service keeps failing ping**: `arm.error` contains the reason
+  (connection refused / timeout / malformed reply).
+- **Logs are too noisy**: `LOG_LEVEL=WARNING`; failures while the follow service
+  is unavailable are already rate-limited to one line per 5 s.
 
-## 7. 已知边界
+## 7. Known boundaries
 
-- 桥**不做逆解、不驱动机械臂**；兜底只会发 `hold` / `stop`，永远不会 `movej` / `home`。
-- 同一时刻只转发**一路**头显连接（后到的顶替先到的，日志里会写明）。
-- 受管进程**不自动重启**：它们会驱动机械臂，崩了只报警，由人决定是否重启
-  （常驻与崩溃重启是 systemd 对本服务自己的事）。
-- 局域网内无鉴权（DESIGN 8.4）。9001 本来就是"谁连上谁能控臂"，别暴露到不可信网络。
+- The bridge **does not solve IK and does not drive the arm**; fallback only
+  sends `hold` / `stop`, never `movej` / `home`.
+- Only **one** headset connection is forwarded at a time (a later one replaces
+  the earlier one, and the log says so).
+- Managed processes **do not restart automatically**: they drive the arm, so a
+  crash is only reported and a human decides whether to restart (persistence and
+  crash restart for the bridge itself are systemd's job).
+- There is no authentication on the LAN (DESIGN 8.4). Port 9001 has always been
+  "whoever connects can control the arm"; do not expose it to untrusted
+  networks.
