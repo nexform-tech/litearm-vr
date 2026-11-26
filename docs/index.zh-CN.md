@@ -9,6 +9,7 @@
 - [仓库总览](../README.zh-CN.md)
 - [上位机操作手册](host-application.zh-CN.md)
 - [快速上手](../QUICKSTART.zh-CN.md)
+- [精度指标](accuracy.zh-CN.md)
 - [从源码安装](setup.zh-CN.md)
 - [打包与发布](../packaging/README.zh-CN.md)
 

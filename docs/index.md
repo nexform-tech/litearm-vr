@@ -10,6 +10,7 @@ component-level documents. Component documents are authoritative for internals.
 - [Repository overview](../README.md)
 - [Host application guide](host-application.md)
 - [Quick start](../QUICKSTART.md)
+- [Precision metrics](accuracy.md)
 - [Setup from source](setup.md)
 - [Packaging and release](../packaging/README.md)
 
