@@ -1,250 +1,296 @@
-# litearm-vr-teleop — Quest 3 VR 遥操（手柄位姿 → 关节角）
+English | [简体中文](README.zh-CN.md)
 
-当前控制采用固定握持锚点与受约束位姿跟踪；部署前请看[漂移修复与迁移说明](teleop/docs/anchored-tracking.md)。
+# litearm-vr-teleop — Quest 3 VR teleoperation (controller pose -> joint angles)
 
-基于 Quest 3 WebXR 手柄的机械臂遥操作系统。手柄位姿经**中间层 zenoh**（由
-[`litearm-vr-bridge`](https://gitee.com/yudao_hz_1/litearm-vr-bridge) 从 8765 转发到
-`litearm/v4/{arm}/vr_frame`）进来，做遥操语义（固定锚定位姿跟踪）+ 逆运动学解算，
-输出 LiteArm V4 七轴机械臂的关节角——仿真里画出来，或者经 TCP 下发给真机跟随服务。
-也可以 `--source ws` 退回「本仓库自己监听 8765、头显直连」。
+The current control uses a fixed grip anchor and constrained pose tracking; read
+the [drift fix and migration notes](teleop/docs/anchored-tracking.md) before
+deployment.
 
-本仓库**只管到关节角为止**。关节角怎么变成电机指令，是
-[`litearm-vr-follow`](https://gitee.com/yudao_hz_1/litearm-vr-follow) 的事（见其 README 的 9001 协议契约）。
+A teleoperation system for the LiteArm based on Quest 3 WebXR controllers. The
+controller pose arrives through the **middle-layer Zenoh** (forwarded by
+[`litearm-vr-bridge`](https://gitee.com/yudao_hz_1/litearm-vr-bridge) from 8765
+to `litearm/v4/{arm}/vr_frame`), goes through the teleoperation semantics (fixed
+anchored pose tracking) and inverse kinematics, and outputs joint angles for the
+LiteArm V4 seven-axis arm: either drawn in simulation or sent over TCP to the
+real-arm follow service. `--source ws` falls back to "this repository listens on
+8765 and the headset connects directly".
+
+This repository **stops at joint angles**. Turning joint angles into motor
+commands belongs to
+[`litearm-vr-follow`](https://gitee.com/yudao_hz_1/litearm-vr-follow) (see the
+9001 protocol contract in its README).
 
 ---
 
-## 数据流
+## Data flow
 
 ```
-Quest 3 手柄(~72Hz)
+Quest 3 controllers (~72 Hz)
       │ ws 8765
       ▼
-litearm-vr-bridge ──zenoh litearm/v4/{arm}/vr_frame──▶ 本仓库（ws_echo_server.py）
-      │  （默认数据源）                                        │
-      │                          ├─ 遥操语义：速度式 delta 映射
-      │                          ├─ IK：pybullet（默认）/ pinocchio + pink / exact
+litearm-vr-bridge ──zenoh litearm/v4/{arm}/vr_frame──▶ this repository (ws_echo_server.py)
+      │  (default data source)                                │
+      │                          ├─ teleoperation semantics: velocity-style delta mapping
+      │                          ├─ IK: pybullet (default) / pinocchio + pink / exact
       │                          │
-      │                          ├──▶ pybullet GUI 窗口 或 RViz2（看）
-      │                          ├──▶ real_arm_client ──TCP 9001/9002──▶ arm_follow_server（动）
-      │                          ├──▶ HandRemoteClient ──TCP 9004──▶ hand_server（灵巧手）
-      │                          └──▶ GripperRemoteClient ──TCP 9003──▶ gripper_server（夹爪）
+      │                          ├──▶ pybullet GUI window or RViz2 (view)
+      │                          ├──▶ real_arm_client ──TCP 9001/9002──▶ arm_follow_server (motion)
+      │                          ├──▶ HandRemoteClient ──TCP 9004──▶ hand_server (dexterous hand)
+      │                          └──▶ GripperRemoteClient ──TCP 9003──▶ gripper_server (gripper)
       │
       └──zenoh .../vr_status──▶ litearm-studio
 ```
 
-- **默认 `--source zenoh`**：订阅桥转发的帧流（桥的协议见其
-  `src/litearm_vr_bridge/protocol.py`）。话题 `litearm/v4/{arm_id}/vr_frame`，
-  会话默认 **peer + 连 `tcp/127.0.0.1:7447`**（桥的监听端点）：peer 连不上只后台重试，
-  所以**先起 teleop、后起桥也照样跑**（桥上来约 1s 内接上）。arm 段与端点都可配：
-  `--arm-id` / `--zenoh-mode` / `--zenoh-connect` / `--zenoh-listen`。
-- **`--source ws`**：本仓库自己监听 8765，Quest 客户端直连，不经过桥。
-  适合「桥没起也要调遥操」或没有 zenoh 的机器。
+- **Default `--source zenoh`**: subscribes to the frame stream forwarded by the
+  bridge (its protocol is in `src/litearm_vr_bridge/protocol.py`). The topic is
+  `litearm/v4/{arm_id}/vr_frame`; the session defaults to **peer + connect
+  `tcp/127.0.0.1:7447`** (the bridge's listening endpoint). A peer that cannot
+  connect only retries in the background, so **starting teleop before the
+  bridge still works** (it connects within about 1 s once the bridge is up). The
+  arm segment and endpoints are configurable: `--arm-id`, `--zenoh-mode`,
+  `--zenoh-connect`, `--zenoh-listen`.
+- **`--source ws`**: this repository listens on 8765 and the Quest client
+  connects directly, bypassing the bridge. Useful when tuning teleoperation
+  without a bridge, or on a machine without Zenoh.
 
 ---
 
-## 功能特性
+## Features
 
-- **四种构型**：单臂正装（默认，`litearm_description.urdf`）、单臂水平侧装（`litearm_side.urdf`）、
-  双臂侧装立柱（`dual_litearm_column_description`，左右臂镜像协作）、
-  双臂正装（`dual_litearm_upright.urdf`，两只独立竖直臂、无立柱，home/映射复用单臂正装基准）
-- **三种 IK 后端**（出厂 `--ik pybullet`，= metavr 的默认）：
-  - `pybullet`（出厂）— 传统 `calculateInverseKinematics`，轻依赖，行为对齐 metavr
-    （best-effort：未收敛也照常下发；无静止死区；外层只钳步长）
-  - `pin` — pinocchio + pink，**策略对齐 metavr 的 `PinkIk`**：任务栈分层（FrameTask +
-    可操作度任务 + PostureTask）、逐拍积分到收敛、QP 硬约束限位与速度。本仓比 metavr
-    多支持双臂
-  - `exact` — 精确任务速度（`exact_ik.py`）。**无阻尼**：twist 要么按手的速度精确
-    产生、要么就地持位，**增益恒为 1 或 0、不随位姿变化**；幅值由关节速度盒界定，
-    冗余自由度只在盒强迫时才花；失败分「盒不可行 / 残差超限 / 雅可比无方向」并指名关节
-- **真机跟随**（`--real`）：解算出的关节角逐帧经 TCP/JSON 下发 `arm_follow_server`，
-  gripActive 边沿映射为 `start` / `latch`。协议与 follow 仓库两版服务端完全一致
-- **灵巧手 / 夹爪**（`--hand` / `--gripper`）：trigger 边沿经 TCP 远端驱动，
-  按下=握拳/闭合，松开=张开。硬件驱动都在 `litearm-vr-follow`，本仓只发指令
-- **两种显示后端**：pybullet 自带 3D 窗口（默认，零依赖）/ RViz2（需 ROS2，可叠加 TF）
-- **速度式 delta 遥操**：gripActive 按下=启动/锚定，松开=暂停；手柄逐帧位姿差驱动，
-  手柄停则机械臂停
+- **Four configurations**: single-arm upright (default,
+  `litearm_description.urdf`), single-arm horizontal side mount
+  (`litearm_side.urdf`), dual-arm side-mount column
+  (`dual_litearm_column_description`, mirrored left/right cooperation), and
+  dual-arm upright (`dual_litearm_upright.urdf`, two independent vertical arms
+  without a column; home and mapping reuse the single-arm upright baseline).
+- **Three IK backends** (factory `--ik pybullet`, the metavr default):
+  - `pybullet` (factory) — classic `calculateInverseKinematics`, light
+    dependencies, behaviour aligned with metavr (best effort: sends even when
+    not converged; no rest deadband; only the outer step limit is applied).
+  - `pin` — pinocchio + pink, **policy aligned with metavr's `PinkIk`**: layered
+    task stack (FrameTask + manipulability task + PostureTask), integrated per
+    tick until convergence, QP hard limits on position and velocity. This
+    repository supports dual arms where metavr does not.
+  - `exact` — exact task velocity (`exact_ik.py`). **No damping**: the twist is
+    either generated exactly at the hand's velocity or the arm holds in place;
+    **the gain is always 1 or 0 and never varies with pose**. The magnitude is
+    bounded by the joint-velocity box, and redundant DOF are used only when the
+    box forces it. Failures distinguish "box infeasible / residual too large /
+    Jacobian has no direction" and name the joint.
+- **Real-arm following** (`--real`): solved joint angles are sent per frame over
+  TCP/JSON to `arm_follow_server`; `gripActive` edges map to `start` / `latch`.
+  The protocol matches both server versions in the follow repository.
+- **Dexterous hand / gripper** (`--hand` / `--gripper`): trigger edges drive the
+  remote TCP service; press = fist/close, release = open. The hardware drivers
+  live in `litearm-vr-follow`; this repository only sends commands.
+- **Two display backends**: pybullet's own 3D window (default, zero
+  dependencies) / RViz2 (needs ROS2, can overlay TF).
+- **Velocity-style delta teleoperation**: `gripActive` press = start/anchor,
+  release = pause; per-frame controller pose deltas drive the arm, and the arm
+  stops when the controller stops.
 
 ---
 
-## 快速开始
+## Quick start
 
-### 1. 安装环境（首次）
+### 1. Install the environment (first time)
 
 ```bash
-bash environments/setup.sh   # 一键重建 conda 环境 metavr-arm
-make smoke                   # 冒烟测试（应输出 SMOKE TEST PASSED）
+bash environments/setup.sh   # rebuild the conda environment metavr-arm
+make smoke                   # smoke test (expects SMOKE TEST PASSED)
 ```
 
-> ROS2 humble 仅 RViz 显示需要（可选）。详见 [环境准备与配置](docs/environment-setup.md)。
+> ROS2 Humble is needed only for RViz display (optional). See
+> [Environment setup](docs/environment-setup.md).
 
-### 2. 启动遥操服务
+### 2. Start the teleoperation service
 
 ```bash
-./launch/run_teleop_webxr.py    # 一键启动（默认：单臂正装 + pybullet 逆解 + pybullet 窗口，不连真机）
-make stop                        # 停止
+./launch/run_teleop_webxr.py    # one command (default: single-arm upright + pybullet IK + pybullet window, no real arm)
+make stop                        # stop
 ```
 
-默认数据源是中间层 zenoh，所以**先把桥起起来**（桥收头显的 `ws://<电脑IP>:8765`，
-再转发到 `litearm/v4/armA/vr_frame`）：
+The default data source is the middle-layer Zenoh, so **start the bridge first**
+(it receives the headset on `ws://<PC-IP>:8765` and forwards to
+`litearm/v4/armA/vr_frame`):
 
 ```bash
-# 不接桥、头显直连本机时，退回自建 WS 监听（8765）
+# Without the bridge, let the headset connect directly to this machine (local WS listener on 8765)
 ./launch/run_teleop_webxr.py --source ws
 ```
 
-### 3. 按需要打开真机 / 末端执行器
+### 3. Enable the real arm / end effector as needed
 
-启动脚本的参数与 `--help` 一一对应，全部直通：
+Launcher arguments map one-to-one to `--help` and are passed through:
 
 ```bash
-./launch/run_teleop_webxr.py --real                        # 连真机（关节角下发 arm_follow_server）
-./launch/run_teleop_webxr.py --real --hand --hand-remote 192.168.66.95:9004   # 真机 + 灵巧手
-./launch/run_teleop_webxr.py --real --gripper --gripper-remote 192.168.66.95:9003  # 真机 + 夹爪
-./launch/run_teleop_webxr.py --dual                        # 双臂侧装立柱
-./launch/run_teleop_webxr.py --dual --upright               # 双臂正装（两只独立竖直臂）
-./launch/run_teleop_webxr.py --ik exact --deadband-scale 0 # 精确任务速度 + 关死区
+./launch/run_teleop_webxr.py --real                        # real arm (joint angles to arm_follow_server)
+./launch/run_teleop_webxr.py --real --hand --hand-remote 192.168.66.95:9004   # real arm + dexterous hand
+./launch/run_teleop_webxr.py --real --gripper --gripper-remote 192.168.66.95:9003  # real arm + gripper
+./launch/run_teleop_webxr.py --dual                        # dual-arm side-mount column
+./launch/run_teleop_webxr.py --dual --upright               # dual-arm upright (two independent vertical arms)
+./launch/run_teleop_webxr.py --ik exact --deadband-scale 0 # exact task velocity + deadband off
 ```
 
-`make teleop` 也一样，用 `ARGS` 直通：`make teleop ARGS="--dual --viewer rviz"`。
+`make teleop` behaves the same and passes `ARGS` through:
+`make teleop ARGS="--dual --viewer rviz"`.
 
 ---
 
-## 配置
+## Configuration
 
-**全部可选项都写在 [ `teleop/config/teleop.yaml` ](teleop/config/teleop.yaml)**（含单位、
-取值范围与「为什么是这个值」），启动脚本与服务端都读它，用 `--config` 换一份：
+**Every option lives in [`teleop/config/teleop.yaml`](teleop/config/teleop.yaml)**
+(units, valid ranges, and why each value was chosen). Both the launcher and the
+server read it; use `--config` to select another file:
 
 ```bash
 cp teleop/config/teleop.yaml teleop/config/my_arm.yaml
 ./launch/run_teleop_webxr.py --config teleop/config/my_arm.yaml
-./launch/run_teleop_webxr.py --port 9000     # 命令行只用来临时覆盖单项
+./launch/run_teleop_webxr.py --port 9000     # the command line only for temporary overrides
 ```
 
-优先级：**命令行 > 配置文件 > 代码里的出厂常量**。布尔项都支持 `--x / --no-x`，
-所以配置文件里写 `true` 也能从命令行关掉。配置段落：`server` / `vr`（数据源：zenoh 话题与会话）、
-`env` / `robot`（含单双臂、侧装/正装）、`tuning`（手感）、`sim`（频率与限幅）、`mapping`
-（**标定值**：三套轴映射）、`pin_ik` / `exact_ik`、`real` / `effector` / `controller`。
+Priority: **command line > configuration file > factory constants in code**.
+Every boolean supports `--x` / `--no-x`, so a `true` in the file can still be
+turned off from the command line. Sections: `server` / `vr` (data source: Zenoh
+topic and session), `env` / `robot` (single/dual arm, side/upright), `tuning`
+(feel), `sim` (rates and limits), `mapping` (**calibration values**: three axis
+mappings), `pin_ik` / `exact_ik`, `real` / `effector` / `controller`.
 
-配置里标着「标定值」的段落是对着真机量出来的，没有重新标定别改。加新选项要动的地方
-与两张「选项 → 配置路径」表的说明见 [开发指南](teleop/docs/development.md#配置文件configteleopyaml)。
+Sections marked as "calibration values" were measured against the real arm; do
+not change them without recalibrating. For where to add a new option and the two
+"option -> config path" tables, see the
+[development guide](teleop/docs/development.md#配置文件configteleopyaml).
 
 ---
 
-## 启动方式详解
+## Launch details
 
-所有参数见 `./launch/run_teleop_webxr.py --help`（默认值见上面的配置文件）。
+All arguments are in `./launch/run_teleop_webxr.py --help` (defaults are in the
+configuration file above).
 
-### 构型
+### Configurations
 
-| 构型 | 命令 | 说明 |
+| Configuration | Command | Notes |
 |---|---|---|
-| **单臂正装**（默认） | `./launch/run_teleop_webxr.py` | 仅右手柄遥操单臂 |
-| 单臂侧装 | `--side` | 只接一只**左**臂：占 left 槽（左手柄驱动、真机走 `:9001`），home/映射取双臂侧装左臂。与 `--dual` 同给时按双臂 |
-| 双臂侧装立柱 | `--dual` | 左右手分别遥操左右臂（镜像协作） |
-| 双臂正装（无立柱） | `--dual --upright` | 两只独立竖直臂，home/映射复用单臂正装基准，右臂镜像 |
+| **Single-arm upright** (default) | `./launch/run_teleop_webxr.py` | Right controller drives one arm |
+| Single-arm side mount | `--side` | A single **left** arm: occupies the left slot (left controller, real arm on `:9001`); home/mapping use the dual-arm side-mount left arm. When combined with `--dual`, the dual-arm mode wins |
+| Dual-arm side-mount column | `--dual` | Left/right controllers drive left/right arms (mirrored cooperation) |
+| Dual-arm upright (no column) | `--dual --upright` | Two independent vertical arms; home/mapping reuse the single-arm upright baseline, right arm mirrored |
 
-### IK 后端
+### IK backends
 
-| 后端 | 参数 | 依赖 | 增益（手→臂） |
+| Backend | Argument | Dependencies | Gain (hand -> arm) |
 |---|---|---|---|
-| **pybullet**（默认） | `--ik pybullet` | 仅 pybullet | ~0.44~0.98（见下方「已知缺陷」） |
-| pinocchio + pink | `--ik pin` | `pin` / `pin-pink` / `qpsolvers` / `quadprog` | 0.9998（逐拍积分到收敛） |
-| `exact` 精确任务速度 | `--ik exact` | 无（纯 NumPy） | **1.000**，或 0（持位） |
+| **pybullet** (default) | `--ik pybullet` | pybullet only | ~0.44–0.98 (see "Known defect" below) |
+| pinocchio + pink | `--ik pin` | `pin` / `pin-pink` / `qpsolvers` / `quadprog` | 0.9998 (integrated per tick until convergence) |
+| `exact` exact task velocity | `--ik exact` | none (pure NumPy) | **1.000**, or 0 (hold) |
 
-> **已知缺陷（pybullet 后端）**：它用绝对迭代 IK，接受容差 3 mm / 0.05 rad，而目标每帧
-> 从**已到位的位姿**重建 —— 于是每帧的 IK 残差被永久丢掉。实测手→臂交付比只有
-> **0.435 / 0.462 / 0.480**（5 / 10 / 20 cm/s），即手移 10 cm 臂只走约 4.4 cm。
-> 它只是轻依赖回退；要跟手请用 `pin` 或 `exact`。
+> **Known defect (pybullet backend)**: it uses absolute iterative IK with a
+> 3 mm / 0.05 rad acceptance tolerance, while the target is rebuilt every frame
+> from the **already-arrived pose**, so each frame's IK residual is discarded
+> permanently. Measured hand-to-arm delivery ratio is only **0.435 / 0.462 /
+> 0.480** (5 / 10 / 20 cm/s), i.e. moving the hand 10 cm moves the arm about
+> 4.4 cm. It is only a light-dependency fallback; use `pin` or `exact` for
+> responsive following.
 
-### 速度与步长限制
+### Speed and step limits
 
-两个配置键（**不是**命令行参数），都在 `teleop/config/teleop.yaml`：
+Two configuration keys (**not** command-line arguments), both in
+`teleop/config/teleop.yaml`:
 
-| 配置键 | 出厂 | 作用 |
+| Key | Factory | Purpose |
 |---|---|---|
-| `sim.max_step_rad` | `0.2` rad/帧（60 Hz ⇒ 12 rad/s） | 每帧关节步长上限，**防 IK 跳变**，与速度无关。`--ik pybullet` 与 `--ik pin` 共用（metavr 也在 IK 分派之后只钳一次）；出厂 0.2 是 metavr 的值，速度式 delta 下被削掉的位移不会补回，实测 0.08 在 5cm 快挥时只到位 40~86% |
-| `exact_ik.max_joint_vel` | `10.0` rad/s | **只被 `--ik exact` 用**（速度盒 = 它与「行程/dt」的交集）。⚠ metavr 没有这个量，所以它在 `exact_ik:` 段而不是全局 `sim:` |
+| `sim.max_step_rad` | `0.2` rad/frame (60 Hz => 12 rad/s) | Per-frame joint step cap, **prevents IK jumps**, independent of speed. Shared by `--ik pybullet` and `--ik pin` (metavr also clamps once after IK dispatch); the factory 0.2 is metavr's value. Under velocity-style deltas the clipped displacement is not made up; measured 0.08 reaches only 40–86% of a fast 5 cm wave |
+| `exact_ik.max_joint_vel` | `10.0` rad/s | **Used only by `--ik exact`** (velocity box = intersection with "travel/dt"). Note that metavr has no such quantity, which is why it lives in the `exact_ik:` section rather than global `sim:` |
 
-**为什么限速度**：一是和真机同速。真机被 `arm_follow_server` 的梯形 slew 限在
-`--max-speed 2.0` / `--max-accel 3.0`，仿真不限速就会「大幅挥手瞬时到位」，看着对、真机跟不上。
-二是 `--ik exact` 的判据本身就取自它：手速要的关节速度超出速度盒 ⇒ **就地持位**并印
-`[持位][box]`，大声停下，而不是静默欠交付。
+**Why limit speed**: first, to match the real arm. The real arm is held by
+`arm_follow_server`'s trapezoidal slew at `--max-speed 2.0` / `--max-accel 3.0`;
+without a simulation limit, a large wave "arrives instantly" in simulation while
+the real arm cannot keep up. Second, `--ik exact` derives its criterion from it:
+when the joint speed demanded by the hand exceeds the velocity box, the arm
+**holds in place** and prints `[hold][box]`, stopping loudly instead of silently
+under-delivering.
 
-**为什么限步长**：与速度无关的兜底。7 轴冗余换解、或经过近奇异位姿时，一帧的解可能跳
-1 rad 以上，`sim.max_step_rad` 把这种跳变削平。
+**Why limit the step**: a safety net independent of speed. When the seven-axis
+redundancy switches solutions or passes near a singularity, one frame's solution
+can jump by more than 1 rad; `sim.max_step_rad` flattens that jump.
 
-**想关掉速度这一界**：把 `exact_ik.max_joint_vel` 从出厂 `10.0` 调到 **`99.0`**
-（60 Hz 下 `99·dt ≈ 1.65 rad/帧`，已远大于任何可达的关节步长 ⇒ 等价于关掉）。
-⚠ 三条前提：
+**To disable the speed bound**: raise `exact_ik.max_joint_vel` from the factory
+`10.0` to **`99.0`** (at 60 Hz, `99·dt ≈ 1.65 rad/frame`, far above any
+reachable joint step => equivalent to disabling). Note three prerequisites:
 
-- **`--ik pin` 不受影响**：它的上限是 pink 的 `VelocityLimit`（配置里
-  `pin_ik.velocity_limit`，出厂 `1.0` = URDF 值），要一起放开得改那里。
-- **不会让真机变快**：真机链上另有两层 —— `arm_follow_server` 的 `--max-speed` /
-  `--max-accel`，以及固件/电机自身的限幅。只改这里的唯一效果是**仿真不再因速度而持位**：
-  目标更激进，真机照旧削回。
-- **别顺手放开 `sim.max_step_rad`**：它挡的是跳变，不是速度。
+- **`--ik pin` is unaffected**: its limit is pink's `VelocityLimit`
+  (`pin_ik.velocity_limit`, factory `1.0` = the URDF value); relax that too if
+  needed.
+- **It does not make the real arm faster**: the real chain has two more layers —
+  `arm_follow_server`'s `--max-speed` / `--max-accel` and the firmware/motor
+  limits. The only effect here is that **the simulation no longer holds because
+  of speed**: targets become more aggressive and the real arm still clips them.
+- **Do not also relax `sim.max_step_rad`**: it guards against jumps, not speed.
 
-### 显示后端
+### Display backends
 
-| 后端 | 参数 | 依赖 | 说明 |
+| Backend | Argument | Dependencies | Notes |
 |---|---|---|---|
-| **pybullet GUI**（默认） | `--viewer gui` | 仅 Python 环境 | 自带 3D 窗口，鼠标拖拽旋转/滚轮缩放 |
-| RViz2 | `--viewer rviz` | + ROS2 humble | 显示 RobotModel + TF，可叠加更多可视化 |
+| **pybullet GUI** (default) | `--viewer gui` | Python environment only | Own 3D window; drag to rotate, scroll to zoom |
+| RViz2 | `--viewer rviz` | + ROS2 Humble | Shows RobotModel + TF and can overlay more visualisations |
 
-### 真机 / 灵巧手 / 夹爪
+### Real arm / dexterous hand / gripper
 
-| 参数 | 默认 | 说明 |
+| Argument | Default | Notes |
 |---|---|---|
-| `--real` | 关 | 启用真机桥接（`real_arm_client.py`，TCP/JSON 下发关节角） |
-| `--real-left` / `--real-right` | `127.0.0.1:9001` / `:9002` | 左右臂 `arm_follow_server` 地址 |
-| `--hand` | 关 | 启用灵巧手（trigger 边沿 → 握拳/张开） |
-| `--hand-remote` | 空 | 灵巧手服务 `hand_server.py` 地址，`--hand` 时必填（灵巧手在另一台工控机的总线上） |
-| `--gripper` | 关 | 启用夹爪（trigger 边沿 → 闭合/张开） |
-| `--gripper-remote` | 空 | 夹爪服务 `gripper_server.py` 地址，`--gripper` 时必填（夹爪在另一台工控机的总线上） |
+| `--real` | off | Enable real-arm bridging (`real_arm_client.py`, joint angles over TCP/JSON) |
+| `--real-left` / `--real-right` | `127.0.0.1:9001` / `:9002` | `arm_follow_server` address for the left/right arm |
+| `--hand` | off | Enable the dexterous hand (trigger edge -> fist/open) |
+| `--hand-remote` | empty | `hand_server.py` address; required with `--hand` (the hand is on another industrial PC's bus) |
+| `--gripper` | off | Enable the gripper (trigger edge -> close/open) |
+| `--gripper-remote` | empty | `gripper_server.py` address; required with `--gripper` (the gripper is on another industrial PC's bus) |
 
-> 灵巧手与夹爪都是同一根 trigger 边沿的消费者，**通常只启用实际装在臂上的那个**。
-> 两者的硬件驱动都在 `litearm-vr-follow` 仓（`hand_server.py` / `gripper_server.py`），
-> 本机经 TCP 发指令，**不碰 CAN、不装 SDK**。
+> The hand and gripper are both consumers of the same trigger edge; **normally
+> enable only the one actually mounted on the arm**. Both hardware drivers live
+> in `litearm-vr-follow` (`hand_server.py` / `gripper_server.py`); this machine
+> sends commands over TCP and **never touches CAN or installs the SDK**.
 
-### 命令行参数总表（`launch/run_teleop_webxr.py`）
+### Full command-line reference (`launch/run_teleop_webxr.py`)
 
-启动脚本**只用标准库**，可由系统 `python3` 直接跑；它自己负责找到 metavr-arm 环境。
-完整表见 `./launch/run_teleop_webxr.py --help`。
+The launcher **uses only the standard library**, so the system `python3` can run
+it; it finds the metavr-arm environment itself. The complete table is in
+`./launch/run_teleop_webxr.py --help`.
 
-| 参数 | 默认 | 说明 |
+| Argument | Default | Notes |
 |---|---|---|
-| `--metavr-py PATH` | 自动解析 | metavr-arm 环境的 python；不传则按 `CONDA_PREFIX` → `conda info --base` → 常见 conda/venv 根 的顺序找 |
-| `--source` | `zenoh` | 数据源：`zenoh`=订阅中间层帧流（桥转发）/ `ws`=自建 WS 监听，头显直连 |
-| `--arm-id` | `armA` | zenoh 话题里的 arm 段（`litearm/v4/{arm_id}/vr_frame`）。必须与桥的 `ZENOH_ARM_ID` 一致，**填错不报错、只是收不到帧** |
-| `--zenoh-mode` | `peer` | zenoh 会话模式：`peer`=连不上只后台重试，**桥后起也能接上** / `client`=开会话时就要求连上（桥没起会报错退出）/ `router` |
-| `--zenoh-connect` | `tcp/127.0.0.1:7447` | zenoh 主动连的端点，逗号分隔（默认 = 同机桥的监听端点）；桥在别的机器就写那台 IP |
-| `--zenoh-listen` | 空 | zenoh 监听端点（默认不监听：同机的桥已占 7447） |
-| `--host` | `0.0.0.0` | WS 监听地址（`--source ws` 时用） |
-| `--port` | `8765` | WS 监听端口（`--source ws` 时用） |
-| `--dual` | 关 | 双臂（默认单臂正装）；配 `--upright` 为双臂正装，否则双臂侧装立柱 |
-| `--upright` | 关 | 与 `--dual` 同用：双臂正装（两只独立竖直臂、无立柱）；仅 `--dual` 时生效 |
-| `--side` | 关 | 单臂侧装 = 单左臂（左手柄驱动、真机走 `:9001`；与 `--dual` 同给时按双臂） |
-| `--viewer` | `gui` | `gui`=pybullet 窗口，`rviz`=RViz2（需 ROS2） |
-| `--ik` | `pybullet` | `pybullet`（出厂，= metavr 的 `IK_BACKEND`）/ `pin` / `exact` |
-| `--tcp-offset X Y Z` | `0 0 0` | 末端偏移量（米，本体系，沿工具轴 +z）：控制的工具点相对 tip link 的偏移。**出厂 `0 0 0` = 直接控法兰**；装夹爪/灵巧手时可设为如 `0 0 0.18` 延伸到抓取点 |
-| `--deadband-scale` | `1.0` | 静止死区阈值乘数；`0`=关掉（**会放行追踪噪声**）。出厂值在 60Hz 下等于 1.8cm/s / 0.18rad/s |
-| `--smooth-alpha` | `0.5` | 增量 EMA 平滑的新样本权重，取值 `(0, 1]`；`1.0`=不平滑（最跟手也最抖）。⚠ `0` 会让臂完全不动 |
-| `--resume-margin` | `1.0` | `--ik exact` 的持位滞回（`1.0`=朴素规则） |
-| `--task-residual-tolerance` | `1e-3` | `--ik exact` 判定「任务被产生」的残差比例上限 |
-| `--manip-weight` | `1e-2` | `--ik pin` 的操纵度任务权重（把冗余推向雅可比更良态的构型，**预防**奇异）。出厂 `1e-2`（metavr 该任务常开）；写 0 可关掉。调大会与 FrameTask 抢优先级 |
-| `--control-frame` | `tool` | 旋转增量读在哪个系：`tool`=末端局部系（出厂/现状）/ `base_link`=基座系（绕**世界轴**转，与平移同源） |
-| `--base-link-signs X Y Z` | `-1 -1 1` | `--control-frame base_link` 用的逐轴旋转符号（初值借自 teleop-vr 实测，**本台架未重测**） |
-| `--real` | 关 | 启用真机桥接 |
-| `--real-left` / `--real-right` | `127.0.0.1:9001` / `:9002` | 左右臂 follow 服务地址 |
-| `--hand` | 关 | 启用灵巧手（trigger 边沿 → 握拳/张开） |
-| `--hand-remote HOST:PORT` | 空 | 灵巧手服务 `hand_server.py` 地址（`--hand` 时必填，如 `192.168.66.95:9004`） |
-| `--gripper` | 关 | 启用夹爪（trigger 边沿 → 闭合/张开） |
-| `--gripper-remote HOST:PORT` | 空 | 夹爪服务 `gripper_server.py` 地址（`--gripper` 时必填，如 `192.168.66.95:9003`） |
+| `--metavr-py PATH` | auto | Python of the metavr-arm environment; when omitted, resolved via `CONDA_PREFIX` -> `conda info --base` -> common conda/venv roots |
+| `--source` | `zenoh` | Data source: `zenoh` = subscribe to the middle-layer frame stream (bridge forwarding) / `ws` = own WS listener with the headset connecting directly |
+| `--arm-id` | `armA` | Arm segment in the Zenoh topic (`litearm/v4/{arm_id}/vr_frame`). Must match the bridge's `ZENOH_ARM_ID`; **a wrong value does not error, it simply receives no frames** |
+| `--zenoh-mode` | `peer` | Zenoh session mode: `peer` = retry in the background, **connects even if the bridge starts later** / `client` = requires a connection at session start (errors out without the bridge) / `router` |
+| `--zenoh-connect` | `tcp/127.0.0.1:7447` | Endpoints Zenoh actively connects to, comma-separated (default = the local bridge's listening endpoint); use that machine's IP when the bridge is remote |
+| `--zenoh-listen` | empty | Zenoh listening endpoints (default none: the local bridge already owns 7447) |
+| `--host` | `0.0.0.0` | WS listening address (with `--source ws`) |
+| `--port` | `8765` | WS listening port (with `--source ws`) |
+| `--dual` | off | Dual arm (default single-arm upright); with `--upright` dual-arm upright, otherwise dual-arm side-mount column |
+| `--upright` | off | With `--dual`: dual-arm upright (two independent vertical arms, no column); only meaningful with `--dual` |
+| `--side` | off | Single-arm side mount = single left arm (left controller, real arm on `:9001`; when combined with `--dual`, dual-arm wins) |
+| `--viewer` | `gui` | `gui` = pybullet window, `rviz` = RViz2 (needs ROS2) |
+| `--ik` | `pybullet` | `pybullet` (factory, = metavr's `IK_BACKEND`) / `pin` / `exact` |
+| `--tcp-offset X Y Z` | `0 0 0` | Tool offset in metres in the tool frame along the tool +z axis: offset of the controlled tool point from the tip link. **Factory `0 0 0` = control the flange directly**; with a gripper or dexterous hand set e.g. `0 0 0.18` to reach the grasp point |
+| `--deadband-scale` | `1.0` | Rest deadband threshold multiplier; `0` = off (**lets tracking noise through**). The factory value at 60 Hz equals 1.8 cm/s / 0.18 rad/s |
+| `--smooth-alpha` | `0.5` | EMA smoothing weight for new samples, in `(0, 1]`; `1.0` = no smoothing (most responsive, most jittery). Note that `0` freezes the arm |
+| `--resume-margin` | `1.0` | Hold hysteresis for `--ik exact` (`1.0` = naive rule) |
+| `--task-residual-tolerance` | `1e-3` | Residual ratio cap for `--ik exact` to decide "the task was generated" |
+| `--manip-weight` | `1e-2` | Manipulability task weight for `--ik pin` (pushes redundancy toward better-conditioned Jacobians, **preventing** singularities). Factory `1e-2` (metavr keeps this task always on); 0 disables it. Larger values compete with FrameTask |
+| `--control-frame` | `tool` | Frame in which rotation deltas are read: `tool` = end-effector local frame (factory/current) / `base_link` = base frame (rotates about **world axes**, same source as translation) |
+| `--base-link-signs X Y Z` | `-1 -1 1` | Per-axis rotation signs for `--control-frame base_link` (initial values borrowed from teleop-vr measurements; **not re-measured on this bench**) |
+| `--real` | off | Enable real-arm bridging |
+| `--real-left` / `--real-right` | `127.0.0.1:9001` / `:9002` | Follow service addresses for the left/right arm |
+| `--hand` | off | Enable the dexterous hand (trigger edge -> fist/open) |
+| `--hand-remote HOST:PORT` | empty | `hand_server.py` address (required with `--hand`, e.g. `192.168.66.95:9004`) |
+| `--gripper` | off | Enable the gripper (trigger edge -> close/open) |
+| `--gripper-remote HOST:PORT` | empty | `gripper_server.py` address (required with `--gripper`, e.g. `192.168.66.95:9003`) |
 
-### 直接调用（不走一键脚本）
+### Direct invocation (without the launcher)
 
 ```bash
-# 遥操服务（数据源默认 zenoh；真机/灵巧手/夹爪开关见 --help）
+# Teleoperation service (data source defaults to zenoh; see --help for real/hand/gripper switches)
 python scripts/ws_echo_server.py --source zenoh --arm-id armA \
     --zenoh-mode peer --zenoh-connect tcp/127.0.0.1:7447 \
     --viewer gui --ik pin [--dual] [--upright] [--side] [--no-ros] \
@@ -252,107 +298,114 @@ python scripts/ws_echo_server.py --source zenoh --arm-id armA \
     [--hand --hand-remote host:port] \
     [--gripper --gripper-remote host:port]
 
-# 头显直连本机（不经桥、不用 zenoh）
+# Headset connects directly to this machine (no bridge, no zenoh)
 python scripts/ws_echo_server.py --source ws --host 0.0.0.0 --port 8765 \
     --viewer gui --ik pin [--no-ros]
 
-# 纯仿真（不经任何数据源，含 --viewer / --ik / --dual / --upright / --side）
+# Pure simulation (no data source, includes --viewer / --ik / --dual / --upright / --side)
 python -m litearm_teleop.teleop_sim --dual --upright --viewer gui --ik pin
 ```
 
 ---
 
-## 遥操操作
+## Teleoperation
 
-| 手柄输入 | 行为 |
+| Controller input | Behaviour |
 |---|---|
-| **gripActive 按下** | 启动/锚定（记录当前手柄位姿为参考） |
-| 按住期间移动手柄 | 机械臂跟随（速度式 delta 映射）；`REAL=1` 时同时下发给真机 |
-| **gripActive 松开** | 暂停 |
-| **trigger 按下** | 灵巧手握拳 / 夹爪闭合（需 `HAND=1` / `GRIPPER=1`） |
-| **trigger 松开** | 灵巧手张开 / 夹爪张开 |
+| **gripActive pressed** | Start/anchor (records the current controller pose as reference) |
+| Move the controller while held | The arm follows (velocity-style delta mapping); with `REAL=1` it is also sent to the real arm |
+| **gripActive released** | Pause |
+| **trigger pressed** | Dexterous hand fist / gripper close (needs `HAND=1` / `GRIPPER=1`) |
+| **trigger released** | Dexterous hand open / gripper open |
 
-trigger 是模拟量：超过阈值才算「按下」，且带消抖，过滤抖动。
+The trigger is analogue: it counts as "pressed" only above a threshold, with
+debouncing to filter jitter.
 
-陷入奇异时：暂停 → 手柄回中立位 → 重新按下 gripActive 重新锚定。
-（`IK=pin` 后端有 LM 阻尼 + 零空间正则，抗奇异能力比 `pybullet` 好得多。）
+When stuck in a singularity: pause, return the controller to neutral, press
+`gripActive` again to re-anchor. (The `IK=pin` backend has LM damping and
+null-space regularisation, so it resists singularities much better than
+`pybullet`.)
 
 ---
 
-## 目录结构
+## Directory layout
 
 ```
 litearm-vr-teleop/
-└── teleop/                            # 遥操工程：模型描述 + 源码 + 启停脚本
-    ├── docs/                          # 架构 / 环境 / 使用 / 排障 / 开发
-    ├── src/litearm_teleop/            # 自有源码：数据源 + 遥操语义 + IK
-    │   ├── teleop_sim.py              # 单/双臂遥操语义 + 轴映射常量 + 三个 IK 后端的分派
-    │   ├── vr_source.py               # VR 数据源：订阅中间层 zenoh 的 vr_frame 话题
-    │   ├── pin_ik.py                  # pinocchio + pink 微分 IK 后端
-    │   └── exact_ik.py                # 精确任务速度后端（无阻尼，增益 1 或 0）
+└── teleop/                            # teleoperation project: model descriptions + sources + launch/stop scripts
+    ├── docs/                          # architecture / environment / user guide / troubleshooting / development
+    ├── src/litearm_teleop/            # own sources: data source + teleoperation semantics + IK
+    │   ├── teleop_sim.py              # single/dual-arm semantics + axis-mapping constants + IK backend dispatch
+    │   ├── vr_source.py               # VR data source: subscribes to the middle-layer zenoh vr_frame topic
+    │   ├── pin_ik.py                  # pinocchio + pink differential IK backend
+    │   └── exact_ik.py                # exact task-velocity backend (no damping, gain 1 or 0)
     ├── launch/
-    │   ├── run_teleop_webxr.py        # 一键启动（仅标准库；参数取代原环境变量）
-    │   └── stop_teleop.sh             # 停止
+    │   ├── run_teleop_webxr.py        # one-command launcher (standard library only; arguments replace the old environment variables)
+    │   └── stop_teleop.sh             # stop
     ├── scripts/
-    │   ├── ws_echo_server.py          # 遥操服务（zenoh 订阅或 WS 监听 → 同进程驱动 teleop_sim）
-    │   ├── real_arm_client.py         # 真机桥接：关节角 → arm_follow_server（TCP/JSON）
-    │   ├── ros_joint_state.py         # ROS2 /joint_states 发布（RViz 用）
-    │   └── decimate_meshes.py         # STL 降采样（生成 meshes_lowpoly）
-    ├── models/                        # 模型描述（几何真源，各为独立 ROS2 包）
-    │   ├── litearm_description/       # 单臂（上游 litearm-description 的 SE 包）
-    │   │   ├── urdf/litearm_description.urdf   # 正装（joint1~7 / ee_link）
-    │   │   ├── urdf/litearm_side.urdf # 水平侧装（正装的派生物）
-    │   │   ├── meshes/                # 高精度 STL（RViz 用）
-    │   │   └── meshes_lowpoly/        # 降采样 STL（pybullet 渲染用）
-    │   └── dual_litearm_column_description/    # 双臂 URDF + STL：侧装立柱 / 正装（无立柱），
-    │                                          #   两变体复用同一 macro 与 mesh
-    ├── environments/                  # conda 环境定义 + 一键重建
-    ├── tests/                         # 冒烟测试
+    │   ├── ws_echo_server.py          # teleoperation service (zenoh subscription or WS listener -> teleop_sim in-process)
+    │   ├── real_arm_client.py         # real-arm bridge: joint angles -> arm_follow_server (TCP/JSON)
+    │   ├── ros_joint_state.py         # ROS2 /joint_states publication (for RViz)
+    │   └── decimate_meshes.py         # STL decimation (generates meshes_lowpoly)
+    ├── models/                        # model descriptions (geometry source of truth, each an independent ROS2 package)
+    │   ├── litearm_description/       # single arm (the SE package from upstream litearm-description)
+    │   │   ├── urdf/litearm_description.urdf   # upright (joint1~7 / ee_link)
+    │   │   ├── urdf/litearm_side.urdf # horizontal side mount (derived from the upright model)
+    │   │   ├── meshes/                # high-detail STL (for RViz)
+    │   │   └── meshes_lowpoly/        # decimated STL (for pybullet rendering)
+    │   └── dual_litearm_column_description/    # dual-arm URDF + STL: side-mount column / upright (no column),
+    │                                          #   both variants reuse the same macro and mesh
+    ├── environments/                  # conda environment definition + one-command rebuild
+    ├── tests/                         # smoke tests
     └── Makefile  CHANGELOG.md
 ```
 
 ---
 
-## 环境准备
+## Environment setup
 
-首次部署请先看 [环境准备与配置](docs/environment-setup.md) —— 系统要求、依赖清单、一键安装、网络镜像渠道。
+For a first deployment read [Environment setup](docs/environment-setup.md):
+system requirements, dependency list, one-command install, and network mirrors.
 
 ```bash
-bash environments/setup.sh   # 一键重建 conda 环境 metavr-arm
-make smoke                   # 冒烟测试
+bash environments/setup.sh   # rebuild the conda environment metavr-arm
+make smoke                   # smoke test
 ```
 
-三个入口（`setup.sh` / `run_teleop_webxr.py` / `Makefile`）找的是**同一个环境**，
-不用手工对齐路径：
+The three entry points (`setup.sh` / `run_teleop_webxr.py` / `Makefile`) all
+resolve the **same environment**, so paths do not need to be aligned by hand:
 
-- `setup.sh` 直接问 conda 根目录在哪（`conda info --base`），**不猜**——环境就建在那里
-- 启动脚本和 `make` 按 `--metavr-py`（或 `METAVR_PY`） → 已激活的同名环境 → `conda info --base`
-  → 常见 conda/venv 根 的顺序解析
+- `setup.sh` asks conda for its root (`conda info --base`) and **does not
+  guess** — the environment is created there
+- the launcher and `make` resolve in this order: `--metavr-py` (or `METAVR_PY`)
+  -> an already-activated environment with the same name -> `conda info --base`
+  -> common conda/venv roots
 
-所以 `bash environments/setup.sh` 之后，`make smoke` / `make teleop` 直接就能用，
-不需要再告诉它们环境在哪。conda 装在非常规位置时给个提示即可：
+So after `bash environments/setup.sh`, `make smoke` / `make teleop` work
+directly without telling them where the environment is. If conda lives in an
+unusual place, give a hint:
 
 ```bash
-export METAVR_PY=~/myconda/envs/metavr-arm/bin/python   # 或
+export METAVR_PY=~/myconda/envs/metavr-arm/bin/python   # or
 make PY_ARM=~/myconda/envs/metavr-arm/bin/python smoke
 ```
 
-### 运行时依赖（Python 包之外）
+### Runtime dependencies (beyond Python packages)
 
-| 能力 | 额外需要 |
+| Capability | Additional requirement |
 |---|---|
-| 中间层 zenoh 数据源（**出厂** `--source zenoh`） | 同机跑着的 `litearm-vr-bridge`（它 listen `tcp/0.0.0.0:7447`）+ 环境里的 `eclipse-zenoh`（`environments/metavr-arm-requirements.txt` 已含） |
-| RViz2 显示 | ROS2 humble |
-| 真机跟随 | `litearm-vr-follow` 的 `arm_follow_server` 在 `REAL_LEFT`/`REAL_RIGHT` 上监听 |
-| 灵巧手 | `litearm-vr-follow` 的 `hand_server.py` 在 `--hand-remote` 上监听（本机不需要 CAN/SDK） |
-| 夹爪 | `litearm-vr-follow` 的 `gripper_server.py` 在 `--gripper-remote` 上监听（本机不需要 CAN） |
+| Middle-layer Zenoh data source (**factory** `--source zenoh`) | A local `litearm-vr-bridge` (listening on `tcp/0.0.0.0:7447`) + `eclipse-zenoh` in the environment (already in `environments/metavr-arm-requirements.txt`) |
+| RViz2 display | ROS2 Humble |
+| Real-arm following | `arm_follow_server` from `litearm-vr-follow` listening on `REAL_LEFT`/`REAL_RIGHT` |
+| Dexterous hand | `hand_server.py` from `litearm-vr-follow` listening on `--hand-remote` (this machine needs no CAN/SDK) |
+| Gripper | `gripper_server.py` from `litearm-vr-follow` listening on `--gripper-remote` (this machine needs no CAN) |
 
 ---
 
-## 文档索引
+## Documentation index
 
-- [环境准备与配置](docs/environment-setup.md) — 系统要求 / 依赖 / 安装 / 网络镜像
-- [系统架构](docs/architecture.md) — 数据流 / 遥操语义 / 坐标系映射
-- [使用手册](docs/user-guide.md) — 日常操作与常见问题
-- [排障手册](docs/troubleshooting.md) — 全部实战踩坑记录
-- [开发指南](docs/development.md) — 目录 / 配置旋钮 / 模型修改
+- [Environment setup](docs/environment-setup.md) — system requirements / dependencies / installation / network mirrors
+- [Architecture](docs/architecture.md) — data flow / teleoperation semantics / coordinate mapping
+- [User guide](docs/user-guide.md) — daily operation and common questions
+- [Troubleshooting](docs/troubleshooting.md) — all field-proven pitfalls
+- [Development guide](docs/development.md) — layout / configuration knobs / model changes
