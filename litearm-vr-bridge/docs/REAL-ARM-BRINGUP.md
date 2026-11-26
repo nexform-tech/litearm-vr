@@ -1,194 +1,228 @@
-# 真机调试（Bring-up）
+English | [简体中文](REAL-ARM-BRINGUP.zh-CN.md)
 
-> 这篇是**给站在机器前面的人**看的：第一次把 VR 链路接到真机械臂上，或者换了一台机器
-> 重新拉起。配置项含义见 [DESIGN](DESIGN.md) 第 7 节，日常启停见 [README](../README.md)，
-> 部署与排障见 [DEPLOY](DEPLOY.md)。
+# Real-arm bring-up
+
+> This page is for **the person standing in front of the machine**: connecting
+> the VR chain to a real arm for the first time, or bringing it up again on a
+> new machine. Configuration keys are in [DESIGN](DESIGN.md) section 7, daily
+> start/stop is in [README](../README.md), and deployment and troubleshooting are
+> in [DEPLOY](DEPLOY.md).
 >
-> **先读完第 0、1 节再动手。** 第 2 节是四档推进，每一档都有"过了是什么样"，
-> 不要跳档。
+> **Read sections 0 and 1 before touching anything.** Section 2 has four
+> stages, each with a "what passing looks like"; do not skip stages.
 
-## 0. 先定机器：三条硬约束
+## 0. Choose the machine first: three hard constraints
 
-| 约束 | 为什么 | 不满足会怎样 |
+| Constraint | Why | Consequence if unmet |
 | --- | --- | --- |
-| **STM32 的 USB 线插在谁身上** | 真机跟随服务要开 `/dev/ttyACM0`（STM32 是 USB CDC） | 起不来 —— 日志里是上游那句"串口不存在" |
-| **metavr-arm 的 conda 环境在哪台** | teleop 要 pybullet / pinocchio / pink | 起不来 —— "找不到 metavr-arm 环境的 python" |
-| **头显能不能连到那台** | 桥监听在那台的 LAN IP 上，头显按 IP 连 | 帧进不来 —— 假头显能通、真头显不通 |
+| **Which machine has the STM32 USB cable** | The real-arm follow service opens `/dev/ttyACM0` (the STM32 is USB CDC) | It does not start — the log shows the upstream's "serial port does not exist" |
+| **Which machine has the metavr-arm conda environment** | teleop needs pybullet / pinocchio / pink | It does not start — "cannot find the metavr-arm environment python" |
+| **Whether the headset can reach that machine** | The bridge listens on that machine's LAN IP, and the headset connects by IP | Frames do not arrive — the fake headset works, the real one does not |
 
-⚠️ **STM32 不在"控制器"上。** 谁插着 USB 线，设备就在谁那儿（见 `litearm-vr` 那份
-STM32 实操笔记）。所以"真机在哪台机器上调试"取决于机械臂的 USB 线插在哪。
+Note: **the STM32 is not on the "controller".** The device is wherever the USB
+cable is plugged in (see the STM32 notes in `litearm-vr`). So "which machine to
+debug the real arm on" is determined by where the arm's USB cable is.
 
-于是只有三种形态：
+There are therefore only three shapes:
 
-- **A. 一台真 Linux（工控机 / 开发机）** —— 三条都能满足，**首选**。要做的只是把桥
-  放过去：`git clone --recursive` + `git submodule update --init` + `./scripts/install.sh --user`。
-- **B. WSL / 容器里** —— USB 要直通（WSL 用 `usbipd attach --wsl`），conda 环境得现建
-  （上游 `environments/setup.sh`）；**WSL2 默认 NAT，头显连不进来**（桥的 `lan_addr`
-  那行会打印一个 198.18.x.x 的地址，那是 WSL 自己的）。要么改 WSL 的 mirrored 网络 /
-  做端口转发，要么这一档改用假头显（第 2 节档 1）。
-- **C. Windows 直接跑** —— pybullet / pinocchio 在 Windows 上装起来很麻烦，不建议。
+- **A. A real Linux machine (industrial PC / development machine)** — satisfies
+  all three constraints and is **preferred**. All you need to do is put the
+  bridge there: `git clone --recursive` + `git submodule update --init` +
+  `./scripts/install.sh --user`.
+- **B. WSL / a container** — USB must be passed through (on WSL,
+  `usbipd attach --wsl`), and the conda environment must be built there (the
+  upstream `environments/setup.sh`). **WSL2 uses NAT by default, so the headset
+  cannot connect** (the bridge's `lan_addr` line prints a 198.18.x.x address,
+  which belongs to WSL). Either switch WSL to mirrored networking / add port
+  forwarding, or use the fake headset for this shape (stage 1 in section 2).
+- **C. Running directly on Windows** — pybullet / pinocchio are painful to
+  install on Windows; not recommended.
 
-## 1. 上电前要定两件事
+## 1. Decide two things before powering on
 
-### 1.1 跟随时用哪种控制律（`FOLLOW_SERVER_CTRL_MODE`）
+### 1.1 Which control law to use while following (`FOLLOW_SERVER_CTRL_MODE`)
 
-上游 `arm_follow_server_stm32.py --mode` 的四挡语义（抄自它的 `--help`）：
+The four settings of the upstream `arm_follow_server_stm32.py --mode` (from its
+`--help`):
 
-| 值 | 含义 |
+| Value | Meaning |
 | --- | --- |
-| `jf` | JOINT_FOLLOW 0x08，**固件内伺服环 + 前馈** —— 上游标"推荐"，**需固件 ≥ 1.9.0** |
-| `js` | MOVE_JS 关节伺服 |
-| `j` | MOVE_J 轨迹解算 |
-| `mit` | MOVE_MIT_ALL 透传（**无重力补偿，慎用**） |
+| `jf` | JOINT_FOLLOW 0x08, **firmware servo loop plus feedforward** — the upstream "recommended" setting, **requires firmware >= 1.9.0** |
+| `js` | MOVE_JS joint servo |
+| `j` | MOVE_J trajectory solving |
+| `mit` | MOVE_MIT_ALL passthrough (**no gravity compensation; use with care**) |
 
-桥默认传 **`js`**（上一个会话"对齐真机参数"时定的）。板上固件如果是 1.9.0 及以上，
-应该试上游推荐的 `jf`：
+The bridge passes **`js`** by default (chosen in a previous session when
+"aligning real-arm parameters"). If the board firmware is 1.9.0 or newer, try
+the upstream-recommended `jf`:
 
 ```bash
 FOLLOW_SERVER_CTRL_MODE=jf ./scripts/up.sh --link
 ```
 
-**先读板上固件版本**（别猜）：
+**Read the firmware version from the board first** (do not guess):
 
 ```bash
 ./submodules/litearm-vr-follow/run_stm32_comm_test.sh /dev/ttyACM0
-# 第 2 步就是发 CMD_GET_FIRMWARE(0x41)，会打印 "Litearm1.9.0-*" 这样的版本串
+# Step 2 sends CMD_GET_FIRMWARE(0x41) and prints a version string such as "Litearm1.9.0-*"
 ```
 
-### 1.2 两个环境变量指哪
+### 1.2 Where the two environment variables point
 
-上游脚本自己解析环境，桥只负责把环境传下去。这台机器上要 export 的：
+The upstream scripts resolve their own environment; the bridge only passes it
+down. On this machine export:
 
 ```bash
-export LITEARM_TOOLS=<litearm-stm32 仓库的 tools 目录>   # arm_console.py 在哪
-export TELEOP_SERVER_PY=<envs/metavr-arm/bin/python>            # 找不到 conda 环境时才要
+export LITEARM_TOOLS=<tools directory of the litearm-stm32 repository>   # where arm_console.py lives
+export TELEOP_SERVER_PY=<envs/metavr-arm/bin/python>            # needed only when conda is not found
 ```
 
-（`--doctor` 的 `follow_tools` / `teleop_python` 两项就是查这个，它们给的提示里带着
-它会按什么顺序去找。）
+(The `follow_tools` / `teleop_python` items of `--doctor` check exactly this and
+their messages state the search order used.)
 
-### 1.3 安全前置（照 `deploy/bridge.env.example` 那条 ⚠ 来）
+### 1.3 Safety prerequisites (follow the warning in `deploy/bridge.env.example`)
 
-臂已上电、**工作区清空**、**急停在手**、重力补偿参数写好。
-**首次按 grip 会 `movej` 回 `q_home`** —— 那是臂自己动，不是你控制的。
+The arm is powered, **the workspace is clear**, **the emergency stop is within
+reach**, and the gravity-compensation parameters are written.
+**The first grip press sends `movej` back to `q_home`** — the arm moves by itself,
+not under your control.
 
-## 2. 四档推进
+## 2. Four stages
 
-### 档 0 · 只读预检（不碰硬件）
+### Stage 0: read-only preflight (does not touch hardware)
 
 ```bash
 ./scripts/up.sh --check-only
 ```
 
-**过了是什么样**：15 项里没有解释不清的 FAIL。
+**What passing looks like**: no unexplained FAIL among the 15 items.
 
-预期会看到的（能解释就行，不用消掉）：
+Expected items (explain them, do not necessarily clear them):
 
-| 项 | 什么时候会是 FAIL/WARN | 怎么处理 |
+| Item | When it is FAIL/WARN | What to do |
 | --- | --- | --- |
-| `hardware` | 串口没插 / 没直通 | 插上 USB；WSL 里 `usbipd attach --wsl --busid <busid>` |
-| `follow_tools` | 找不到 `arm_console.py` | `export LITEARM_TOOLS=...`（见 1.2） |
-| `teleop_python` | 没有 conda 环境 | `export TELEOP_SERVER_PY=...`，或先跑上游 `environments/setup.sh` |
-| `display` | 系统服务里没有 DISPLAY | 用 `install.sh --user`，或 `TELEOP_VIEWER=rviz` |
-| `submodules` | 没 init / 被就地改过 | `git submodule update --init`；改上游请去它自己的仓库 |
-| `env:teleop` / `flags:follow_server` | 上游换了变量名/参数名 | 上游被改过，核对 submodule 里那份 |
+| `hardware` | Serial port not plugged in / not passed through | Plug in USB; on WSL `usbipd attach --wsl --busid <busid>` |
+| `follow_tools` | `arm_console.py` not found | `export LITEARM_TOOLS=...` (see 1.2) |
+| `teleop_python` | No conda environment | `export TELEOP_SERVER_PY=...`, or run the upstream `environments/setup.sh` |
+| `display` | System service has no DISPLAY | Use `install.sh --user`, or `TELEOP_VIEWER=rviz` |
+| `submodules` | Not initialised / modified in place | `git submodule update --init`; make upstream changes in their own repositories |
+| `env:teleop` / `flags:follow_server` | Upstream renamed variables or arguments | The upstream was modified; check the submodule copy |
 
-### 档 1 · 纯仿真：只验帧路，不碰臂（**不插 USB 也能做**）
+### Stage 1: pure simulation — verify only the frame path, do not touch the arm (**works without USB**)
 
 ```bash
-TELEOP_ARM_HOST= ./scripts/up.sh          # 显式留空 = 不传 `--real`，up.sh 会自动拉上游
+TELEOP_ARM_HOST= ./scripts/up.sh          # explicitly empty = do not pass --real; up.sh starts the upstreams
 ```
 
-没有头显就用假头显推帧：
+Without a headset, use the fake headset to push frames:
 
 ```bash
 python3 scripts/fake_headset.py --status
 ```
 
-**过了是什么样**：
+**What passing looks like**:
 
-- 假头显那边每秒一行状态：`fps≈90`、`帧龄` 个位数毫秒、`转发` 在涨、`耗时 <1ms`、`teleop=已连`；
-- teleop 那一侧，pybullet 窗口里的模型跟着手柄动（按 grip 后才动）；
-- `链路=following`、`臂=—`（还没接真机）。
+- The fake headset prints one status line per second: `fps≈90`, frame age in
+  single-digit milliseconds, forwarding increasing, cost <1 ms, `teleop=connected`.
+- On the teleop side, the model in the pybullet window follows the controller
+  (only after grip is pressed).
+- `link=following`, `arm=—` (the real arm is not connected yet).
 
-没头显又想装一个真头显：`litearm-vr` 里 `./build.sh quest install`（走下 adb），
-地址在头显的 3D 面板里手填 —— 填桥打印的那个 `ws://<LAN IP>:8765`。
+To install a real headset when none is present: in `litearm-vr` run
+`./build.sh quest install` (over adb), and enter the address by hand in the
+headset's 3D panel — the `ws://<LAN IP>:8765` printed by the bridge.
 
-### 档 2 · 只连硬件、不下发：臂使能但不跟随
+### Stage 2: hardware connected but no commands — the arm is enabled but not following
 
-先脱开桥，单测串口：
+First detach the bridge and test the serial port alone:
 
 ```bash
 ./submodules/litearm-vr-follow/run_stm32_comm_test.sh /dev/ttyACM0
 ```
 
-再让桥把跟随服务拉起来（**不接真机**，teleop 留在仿真档）：
+Then let the bridge start the follow service (**real arm not connected**; teleop
+stays in simulation):
 
 ```bash
-TELEOP_ARM_HOST= ./scripts/up.sh --link    # 拉 follow_server；teleop 仍是仿真，不下发
+TELEOP_ARM_HOST= ./scripts/up.sh --link    # start follow_server; teleop is still simulation and sends nothing
 ```
 
-⚠️ 这一档 `teleop.start` 会给跟随服务发 `start` —— **电机就通电持位了**。
-工作区检查（第 1.3 节）在这一档同样要做，别以为"还没接真机"就可以随便。
+Note: in this stage `teleop.start` sends `start` to the follow service — **the
+motors are powered and hold position**. The workspace check (section 1.3) applies
+here too; "the real arm is not connected yet" is not an excuse.
 
-**过了是什么样**：`--ctl status` 的 `机械臂` 行有 `state` 和 `q`（桥 4Hz `ping` 到了），
-`arm.connected=True`。
+**What passing looks like**: the `arm` line of `--ctl status` has `state` and
+`q` (the bridge's 4 Hz `ping` succeeds), and `arm.connected=True`.
 
-### 档 3 · 真机跟随
+### Stage 3: real-arm following
 
 ```bash
-./scripts/up.sh --link        # 会先拦你确认"工作区无人、急停在手"（非交互要 --yes）
+./scripts/up.sh --link        # asks you to confirm "workspace clear, emergency stop in hand" (use --yes when non-interactive)
 ```
 
-**第一次做**：手不要离开急停，先在**小幅度**下走一遍 —— 假头显的默认半径只有 3cm。
+**The first time**: keep your hand on the emergency stop and start with **small
+amplitudes** — the fake headset's default radius is only 3 cm.
 
-**过了是什么样**：按 grip → 臂先 `movej` 回 `q_home`，然后跟着手柄小幅移动；
-松 grip → 暂停；再按 grip → 从当前位置重新锚定（不会跳）。
+**What passing looks like**: press grip -> the arm first sends `movej` back to
+`q_home`, then follows the controller in small movements; release grip -> pause;
+press grip again -> re-anchor from the current position (no jump).
 
-### 档 4 · 兜底验收（M2 的验收项，别跳）
+### Stage 4: fallback acceptance (the M2 acceptance item; do not skip)
 
-让帧停掉 —— 假头显一条命令就能复现"头显卡住"：
+Stop the frames — the fake headset can reproduce "the headset froze" with one
+command:
 
 ```bash
 python3 scripts/fake_headset.py --drop-after 5 --status
 ```
 
-**过了是什么样**（时间点看桥的日志）：
+**What passing looks like** (watch the bridge log for the times):
 
-| 时刻 | 应该发生 |
+| Time | Expected |
 | --- | --- |
-| 200ms（`FRAME_WARN_MS`） | `[frame_stall]` 告警 |
-| 500ms（`FRAME_FALLBACK_MS`） | `[fallback_hold]` —— 臂**就地保持**（不 movej） |
-| 帧恢复后 | `[fallback_cleared]`，臂保持就地保持，**要重新按 grip** 才能继续 |
+| 200 ms (`FRAME_WARN_MS`) | `[frame_stall]` warning |
+| 500 ms (`FRAME_FALLBACK_MS`) | `[fallback_hold]` — the arm **holds in place** (no movej) |
+| After frames resume | `[fallback_cleared]`; the arm keeps holding and **grip must be pressed again** to continue |
 
-大号验证：直接拔头显电源 / 关 WiFi（= 断线，不是卡住），效果应当一样。
+A larger check: unplug the headset power / turn off Wi-Fi (= disconnect, not a
+freeze); the effect should be the same.
 
-> 假头显在这台机器上实测过：`--drop-after` 之后 202ms 出 `frame_stall`、500ms 出
-> `fallback_hold`，与配置一致（当时的 `hold` 失败是因为那台机器没接 follow_server）。
+> The fake headset was measured on this machine: `--drop-after` produced
+> `frame_stall` at 202 ms and `fallback_hold` at 500 ms, matching the
+> configuration (the `hold` failed then because that machine had no
+> follow_server connected).
 
-## 3. 卡住时的对照表
+## 3. Troubleshooting table
 
-| 症状 | 先看 |
+| Symptom | Look first at |
 | --- | --- |
-| 头显/假头显连不上 | `--doctor` 的 `lan_addr`（IP 对不对）、`port_bridge`（被占没有） |
-| 有 fps 但臂不动 | `link.forward_enabled`（转发开关）→ `bridge.teleop_connected` → `arm.state`（认没认 `start`）→ 假头显打印的每帧增量有没有越过去上游死区 |
-| 帧通、teleop 也连上，但仿真里模型不动 | 假头显的 grip 按了没（`--warmup` 后才按）；`headset.grip` 是不是 true |
-| 上游起不来 | `PROCESS_LOG_DIR/<name>.log` —— **上游脚本自己的报错原文在里面** |
-| 真机不动但 `arm.state=following` | `--mode` 选错（见 1.1）；或 `--kp/--kd`（`jf`/`mit` 共用）没调 |
-| 一直不出兜底告警 | `fallback.guard_enabled`、`FALLBACK_ENABLED` |
+| Headset/fake headset cannot connect | `--doctor`'s `lan_addr` (is the IP right?), `port_bridge` (is it occupied?) |
+| fps exists but the arm does not move | `link.forward_enabled` (forwarding switch) -> `bridge.teleop_connected` -> `arm.state` (did it accept `start`?) -> whether the fake headset's per-frame delta clears the upstream deadband |
+| Frames arrive and teleop connects, but the simulated model does not move | Did the fake headset press grip (press it after `--warmup`)? Is `headset.grip` true? |
+| An upstream does not start | `PROCESS_LOG_DIR/<name>.log` — **the upstream script's own error text is there** |
+| The real arm does not move but `arm.state=following` | Wrong `--mode` (see 1.1), or `--kp/--kd` (shared by `jf`/`mit`) not tuned |
+| No fallback alarm ever appears | `fallback.guard_enabled`, `FALLBACK_ENABLED` |
 
-## 4. 出事怎么办
+## 4. What to do when something goes wrong
 
-- **别直接 `pkill` 跟随服务**：它一停电机就没人持位了。停要走桥：
-  `./scripts/up.sh --stop`（先 latch 再收进程）。
-- 急停：状态机的 `estop`（只发 `stop`，永远不会 `movej`）。
-- 退回仿真：`TELEOP_ARM_HOST=` 留空，`./scripts/up.sh --stop` 之后重来。
-- 桥**不自动重启**上游进程（它们会驱动机械臂，崩了只报警）—— 见 README 的实现取舍 2。
+- **Do not `pkill` the follow service directly**: once it stops, nobody holds the
+  motors. Stop through the bridge: `./scripts/up.sh --stop` (latch first, then
+  stop the processes).
+- Emergency stop: the state machine's `estop` (sends only `stop`, never `movej`).
+- Return to simulation: leave `TELEOP_ARM_HOST=` empty, run
+  `./scripts/up.sh --stop`, and start again.
+- The bridge **does not restart upstream processes automatically** (they drive
+  the arm; a crash is only reported) — see implementation trade-off 2 in the
+  README.
 
-## 5. 现在还没有的东西（会限制这次调试）
+## 5. What does not exist yet (it limits this bring-up)
 
-- **上位机没有 VR 页**（`litearm-studio` 里没有 VR 路由），M4 头显回显也没做 ——
-  所以这次调试**没有图形界面**，只能靠 `--ctl status`、假头显的 `--status` 行、
-  pybullet 窗口和日志。真机调试里"操作员视角"的那部分要等 VR 页。
-- 假头显只验**平移**，姿态一律单位四元数（腕部姿态没覆盖）。
-- 头显连不上时，整条链的"人在环里"这一段（握把语义、扳机控手/夹爪）验不了。
+- **The host application has no VR page** (no VR route in `litearm-studio`), and
+  M4 headset feedback is not implemented — so this bring-up has **no graphical
+  interface** and relies on `--ctl status`, the fake headset's `--status` line,
+  the pybullet window, and logs. The "operator view" part of real-arm debugging
+  waits for the VR page.
+- The fake headset verifies **translation only**; orientation is always the
+  identity quaternion (wrist orientation is not covered).
+- When the headset cannot connect, the "human in the loop" part of the chain
+  (grip semantics, trigger controlling the hand/gripper) cannot be verified.
