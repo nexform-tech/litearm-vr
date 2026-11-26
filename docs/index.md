@@ -13,6 +13,7 @@ component-level documents. Component documents are authoritative for internals.
 - [Precision metrics](accuracy.md)
 - [Setup from source](setup.md)
 - [Packaging and release](../packaging/README.md)
+- [Acceptance evidence](acceptance.md)
 
 ## Components
 

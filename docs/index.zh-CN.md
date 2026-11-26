@@ -12,6 +12,7 @@
 - [精度指标](accuracy.zh-CN.md)
 - [从源码安装](setup.zh-CN.md)
 - [打包与发布](../packaging/README.zh-CN.md)
+- [验收证据](acceptance.zh-CN.md)
 
 ## 组件
 
@@ -28,7 +29,7 @@
 - [开发](../litearm-vr-teleop/teleop/docs/development.md)
 - [环境搭建](../litearm-vr-teleop/teleop/docs/environment-setup.md)
 - [使用指南](../litearm-vr-teleop/teleop/docs/user-guide.md)
-- [排障](../litearm-vr-teleop/teleop/docs/troubleshooting.md)
+- [排障](../litearm-vr-teleop/teleop/docs/troubleshooting.zh-CN.md)
 - [锚点跟踪](../litearm-vr-teleop/teleop/docs/anchored-tracking.md)
 
 ### 跟随（follow）
