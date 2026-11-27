@@ -32,8 +32,8 @@ listening endpoint; see "Quick start" below.
 
 ## Status
 
-**M1 and M2 are implemented and covered by tests; M3 is code-complete and waits
-for field integration.**
+**M1, M2 and M3 are implemented and covered by tests; the real-arm run is
+recorded in [docs/acceptance.md](../docs/acceptance.md).**
 The full design is in [docs/DESIGN.md](docs/DESIGN.md), deployment in
 [docs/DEPLOY.md](docs/DEPLOY.md), and **read
 [docs/REAL-ARM-BRINGUP.md](docs/REAL-ARM-BRINGUP.md) before the first real-arm
@@ -44,7 +44,7 @@ step-by-step bring-up).
 | --- | --- |
 | M1 forwarding and status (8765 frames to Zenoh `vr_frame`, `vr_status` summary, `forward_cost_ms`) | Done |
 | M2 actions and fallback (`teleop.start/stop`, `estop`, 200/500 ms warnings and automatic hold) | Done |
-| M3 process control and systemd (`process.start/stop`, `deploy/`, `scripts/`) | Code complete, waiting for field integration |
+| M3 process control and systemd (`process.start/stop`, `deploy/`, `scripts/`) | Done — `ctl up/down`, latch stop and 90 fps forwarding recorded in [`docs/acceptance.md`](../docs/acceptance.md) §3 |
 | M4 headset feedback | Not started (depends on `litearm-vr` wiring `message_received`) |
 
 ## Quick start
@@ -171,7 +171,7 @@ PYTHONPATH=src python3 -m litearm_vr_bridge --print-config   # show the effectiv
 PYTHONPATH=src python3 -m litearm_vr_bridge --doctor         # preflight
 PYTHONPATH=src python3 -m litearm_vr_bridge                  # run the service in the foreground
 
-PYTHONPATH=src python3 -m unittest discover -s tests -t .    # run the tests (126 items)
+PYTHONPATH=src python3 -m unittest discover -s tests -t .    # run the tests (171 items)
 ```
 
 Minimal configuration (all environment variables are listed in DESIGN section 7):
@@ -198,7 +198,7 @@ application subscribes to `litearm/v4/{arm}/vr_status`.
    occasional alarms. The `event.clear` action clears them explicitly.
 2. **Managed child processes are not restarted automatically.** Both teleop and
    the follow service drive the arm, so restarting them automatically could
-   power the arm or home it without an operator (teleop runs `home` at startup).
+   power the arm or home it without an operator (teleop homes on the first grip press).
    The bridge only reports `running/stopped/crashed`; keeping the bridge itself
    alive and restarting it on crashes is left to systemd.
 3. **3D preview uses `STATUS_HZ` rather than a second message channel.** The

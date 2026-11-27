@@ -14,8 +14,8 @@ The evidence covers the three components delivered by this repository:
 
 Run on the reference laptop with the Pico headset and PyBullet DIRECT:
 
-- Teleop offline suite: 80/80 tests pass, including 21/21 anchored-tracking tests.
-- Bridge offline suite: 168/168 tests pass.
+- Teleop offline suite: 80 tests (78 pass, 2 skipped), including 21 anchored-tracking tests (1 skipped).
+- Bridge offline suite: 171 tests pass.
 - Anchor behaviour: fixed anchor, 100 round trips, cross-180° rotation, unreachable-target recovery, operator-lead handling, and execution-deviation protection.
 - Preview tracking error (`|ee_after − target|`): median 0.9–1.6 mm, p90 3.2–8.6 mm.
 
@@ -53,22 +53,18 @@ The release bundle was built and installed in a clean Ubuntu 22.04.5 virtual mac
 | Gap | Status | Evidence |
 | --- | --- | --- |
 | Gripper shard jitter, `open()` bounce | Code rewritten to a 200 Hz control loop; hardware verification pending a connected gripper | Issue #11 |
-| DKMS `gs_usb` module load | Builds and installs; the test VM kernel lacks `can-dev`, so `modprobe` fails | Issue #12 |
-| Follow lag during fast motion | Follow slew limit; expected behaviour, adjustable through `max_speed` / `max_accel` | Issue #10 |
+| DKMS `gs_usb` module load | Builds and installs; the test VM kernel lacked `can-dev`, so `modprobe` failed. The module load is a field item — see the closing comment on the (now closed) issue | Issue #12 (closed) |
+| Follow lag during fast motion | Follow slew limit; expected behaviour, adjustable through `max_speed` / `max_accel` | Issue #10 (closed) |
 | `litearm-server` (7449) coexistence | Design item pending hardware measurement | `litearm-vr-bridge/docs/DESIGN.md` §8 |
 | URDF parity between host and teleop | Design item; teleop's URDF is the reference | `litearm-vr-bridge/docs/DESIGN.md` §8 |
 
 ## 6. Reproducing the checks
 
 ```bash
-# Teleop tests (from litearm-vr-teleop/teleop)
-PYTHONPATH=src python3 -m unittest discover -s tests -p "test_*.py"
-
-# Bridge tests (from litearm-vr-bridge)
-PYTHONPATH=src python3 -m pytest tests -q
-
-# Follow protocol tests (from litearm-vr-follow)
-python3 -m unittest test_measured_state.py
+# From the repository root — the same entry points CI uses
+bash scripts/ci.sh teleop
+bash scripts/ci.sh bridge
+bash scripts/ci.sh follow
 ```
 
 Real-arm acceptance follows `QUICKSTART.md` and `litearm-vr-bridge/docs/REAL-ARM-BRINGUP.md`.

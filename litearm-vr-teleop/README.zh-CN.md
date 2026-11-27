@@ -1,4 +1,4 @@
-English | [简体中文](README.zh-CN.md)
+[English](README.md) | 简体中文
 
 # litearm-vr-teleop — Quest 3 VR 遥操（手柄位姿 → 关节角）
 
@@ -77,7 +77,7 @@ bash environments/setup.sh   # 一键重建 conda 环境 metavr-arm
 make smoke                   # 冒烟测试（应输出 SMOKE TEST PASSED）
 ```
 
-> ROS2 humble 仅 RViz 显示需要（可选）。详见 [环境准备与配置](docs/environment-setup.md)。
+> ROS2 humble 仅 RViz 显示需要（可选）。详见 [环境准备与配置](docs/environment-setup.zh-CN.md)。
 
 ### 2. 启动遥操服务
 
@@ -317,7 +317,7 @@ litearm-vr-teleop/
 
 ## 环境准备
 
-首次部署请先看 [环境准备与配置](docs/environment-setup.md) —— 系统要求、依赖清单、一键安装、网络镜像渠道。
+首次部署请先看 [环境准备与配置](docs/environment-setup.zh-CN.md) —— 系统要求、依赖清单、一键安装、网络镜像渠道。
 
 ```bash
 bash environments/setup.sh   # 一键重建 conda 环境 metavr-arm
@@ -353,8 +353,8 @@ make PY_ARM=~/myconda/envs/metavr-arm/bin/python smoke
 
 ## 文档索引
 
-- [环境准备与配置](docs/environment-setup.md) — 系统要求 / 依赖 / 安装 / 网络镜像
+- [环境准备与配置](docs/environment-setup.zh-CN.md) — 系统要求 / 依赖 / 安装 / 网络镜像
 - [系统架构](docs/architecture.md) — 数据流 / 遥操语义 / 坐标系映射
-- [使用手册](docs/user-guide.md) — 日常操作与常见问题
-- [排障手册](docs/troubleshooting.md) — 全部实战踩坑记录
+- [使用手册](docs/user-guide.zh-CN.md) — 日常操作与常见问题
+- [排障手册](docs/troubleshooting.zh-CN.md) — 全部实战踩坑记录
 - [开发指南](docs/development.md) — 目录 / 配置旋钮 / 模型修改

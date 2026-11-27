@@ -1,4 +1,4 @@
-English | [简体中文](README.zh-CN.md)
+[English](README.md) | 简体中文
 
 # litearm-vr-bridge
 
@@ -26,15 +26,15 @@ LiteArm 上位机（`litearm-studio`）在 **VR 遥操场景**下使用的常驻
 
 ## 状态
 
-**M1 / M2 已实现并有测试覆盖；M3 代码完成、待现场联调。**
-完整设计见 [docs/DESIGN.md](docs/DESIGN.md)，部署见 [docs/DEPLOY.md](docs/DEPLOY.md)，
-**第一次接真机看 [docs/REAL-ARM-BRINGUP.md](docs/REAL-ARM-BRINGUP.md)**（先定机器、控制律与逐步推进）。
+**M1 / M2 / M3 已实现并有测试覆盖；真机实测记录见 [docs/acceptance.zh-CN.md](../docs/acceptance.zh-CN.md)。**
+完整设计见 [docs/DESIGN.md](docs/DESIGN.md)，部署见 [docs/DEPLOY.zh-CN.md](docs/DEPLOY.zh-CN.md)，
+**第一次接真机看 [docs/REAL-ARM-BRINGUP.zh-CN.md](docs/REAL-ARM-BRINGUP.zh-CN.md)**（先定机器、控制律与逐步推进）。
 
 | 里程碑 | 状态 |
 | --- | --- |
 | M1 转发 + 状态（8765 收帧 → zenoh `vr_frame` 逐帧转发、`vr_status` 摘要、`forward_cost_ms`） | 完成 |
 | M2 动作 + 兜底（`teleop.start/stop`、`estop`、200/500ms 告警与自动 hold） | 完成 |
-| M3 进程启停 + systemd（`process.start/stop`、`deploy/`、`scripts/`） | 代码完成，待现场联调 |
+| M3 进程启停 + systemd（`process.start/stop`、`deploy/`、`scripts/`） | 完成 —— `ctl up/down`、latch 停机与 90 fps 转发见 [`docs/acceptance.zh-CN.md`](../docs/acceptance.zh-CN.md) §3 |
 | M4 头显回显 | 未开始（依赖 `litearm-vr` 接上 `message_received`） |
 
 ## 快捷启动
@@ -138,7 +138,7 @@ PYTHONPATH=src python3 -m litearm_vr_bridge --print-config   # 看生效配置
 PYTHONPATH=src python3 -m litearm_vr_bridge --doctor         # 先体检
 PYTHONPATH=src python3 -m litearm_vr_bridge                  # 前台起服务
 
-PYTHONPATH=src python3 -m unittest discover -s tests -t .    # 跑测试（126 项）
+PYTHONPATH=src python3 -m unittest discover -s tests -t .    # 跑测试（171 项）
 ```
 
 最小配置（全部环境变量见 DESIGN 第 7 节）：
@@ -161,7 +161,7 @@ FOLLOW_SERVER_ENDPOINT=127.0.0.1:9001
    上游 `litearm-studio` 对状态流是覆盖式取用（`snapshotValue = JSON.parse(...)`），
    没有消费确认通道；"推一次就清"会让偶发告警被吞掉。可用动作 `event.clear` 显式清空。
 2. **受管子进程不做自动重启。** teleop / 跟随服务都会驱动机械臂，崩溃后自动拉起等于
-   可能无人值守地重新上电或回零（teleop 启动时上游会自动 `home`）。这里只如实上报
+   可能无人值守地重新上电或回零（teleop 在首次按下 grip 时回零）。这里只如实上报
    `running/stopped/crashed`；常驻与崩溃重启交给 systemd 管本服务自己。
 3. **3D 预览提频用 `STATUS_HZ`，不开第二条消息通道。**
    上位机对状态流是"每条消息都当整份快照覆盖"，另发一种 `arm.q` 消息会被当成残缺快照；

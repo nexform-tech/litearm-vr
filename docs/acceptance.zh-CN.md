@@ -61,14 +61,10 @@
 ## 6. 复现检查
 
 ```bash
-# teleop 测试（在 litearm-vr-teleop/teleop 下）
-PYTHONPATH=src python3 -m unittest discover -s tests -p "test_*.py"
-
-# bridge 测试（在 litearm-vr-bridge 下）
-PYTHONPATH=src python3 -m pytest tests -q
-
-# follow 协议测试（在 litearm-vr-follow 下）
-python3 -m unittest test_measured_state.py
+# 在仓库根目录执行 —— 与 CI 同一入口
+bash scripts/ci.sh teleop
+bash scripts/ci.sh bridge
+bash scripts/ci.sh follow
 ```
 
 真机验收按 `QUICKSTART.md` 与 `litearm-vr-bridge/docs/REAL-ARM-BRINGUP.md` 执行。

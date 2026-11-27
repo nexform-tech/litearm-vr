@@ -36,7 +36,7 @@ litearm-vr-bridge
 跑测试（stdlib unittest，不需要 pytest）：
 
 ```bash
-PYTHONPATH=src python3 -m unittest discover -s tests -t .    # 126 项
+PYTHONPATH=src python3 -m unittest discover -s tests -t .    # 171 项
 ```
 
 ## 2. 上游怎么起：交给它们自己的启动脚本

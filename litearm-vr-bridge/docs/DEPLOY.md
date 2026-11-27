@@ -38,7 +38,7 @@ litearm-vr-bridge
 Run the tests (stdlib unittest, no pytest required):
 
 ```bash
-PYTHONPATH=src python3 -m unittest discover -s tests -t .    # 126 items
+PYTHONPATH=src python3 -m unittest discover -s tests -t .    # 171 items
 ```
 
 ## 2. How the upstreams start: their own launch scripts

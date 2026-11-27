@@ -208,7 +208,7 @@ Two configuration keys (**not** command-line arguments), both in
 without a simulation limit, a large wave "arrives instantly" in simulation while
 the real arm cannot keep up. Second, `--ik exact` derives its criterion from it:
 when the joint speed demanded by the hand exceeds the velocity box, the arm
-**holds in place** and prints `[hold][box]`, stopping loudly instead of silently
+**holds in place** and prints `[持位][box]` (hold), stopping loudly instead of silently
 under-delivering.
 
 **Why limit the step**: a safety net independent of speed. When the seven-axis
