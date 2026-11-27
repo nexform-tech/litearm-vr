@@ -14,8 +14,8 @@
 
 在参考笔记本 + Pico 头显 + PyBullet DIRECT 上运行：
 
-- teleop 离线套件：80/80 通过，其中锚定跟踪 21/21。
-- bridge 离线套件：168/168 通过。
+- teleop 离线套件：80 条测试（78 通过、2 跳过），其中锚定跟踪 21 条（1 跳过）。
+- bridge 离线套件：171 条通过。
 - 锚定行为：固定锚点、100 次往返、跨 180°、不可达目标恢复、操作者领先处理、执行偏差保护。
 - 预览跟踪误差（`|ee_after − 目标|`）：中位 0.9–1.6 mm，p90 3.2–8.6 mm。
 
@@ -53,8 +53,8 @@
 | 缺口 | 状态 | 证据 |
 | --- | --- | --- |
 | 夹爪分片抖动、`open()` 回弹 | 代码已重写为 200 Hz 控制环；待接夹爪做硬件验证 | Issue #11 |
-| DKMS `gs_usb` 模块加载 | 可构建并安装；测试 VM 内核缺 `can-dev`，`modprobe` 失败 | Issue #12 |
-| 快速运动下的跟随滞后 | follow slew 限速的预期行为，可通过 `max_speed` / `max_accel` 调整 | Issue #10 |
+| DKMS `gs_usb` 模块加载 | 可构建并安装；测试 VM 内核缺 `can-dev`，`modprobe` 失败。模块加载属现场项——见（已关闭的）issue 关闭评论 | Issue #12（已关闭） |
+| 快速运动下的跟随滞后 | follow slew 限速的预期行为，可通过 `max_speed` / `max_accel` 调整 | Issue #10（已关闭） |
 | `litearm-server`（7449）共存 | 设计待实测项 | `litearm-vr-bridge/docs/DESIGN.md` §8 |
 | 上位机与 teleop 的 URDF 统一 | 设计待决策项；以 teleop 的 URDF 为准 | `litearm-vr-bridge/docs/DESIGN.md` §8 |
 
