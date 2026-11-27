@@ -228,7 +228,7 @@ cp teleop/config/teleop.yaml teleop/config/my_arm.yaml
 | `--side` | 关 | 单臂侧装 = 单左臂（左手柄驱动、真机走 `:9001`；与 `--dual` 同给时按双臂） |
 | `--viewer` | `gui` | `gui`=pybullet 窗口，`rviz`=RViz2（需 ROS2） |
 | `--ik` | `pybullet` | `pybullet`（出厂，= metavr 的 `IK_BACKEND`）/ `pin` / `exact` |
-| `--tcp-offset X Y Z` | `0 0 0.18` | 末端偏移量（米，本体系，沿工具轴 +z）：控制的工具点相对 tip link 的偏移。**出厂 0.18 = 本台架夹爪的法兰→抓取点距离**；`0 0 0` = 直接控法兰 |
+| `--tcp-offset X Y Z` | `0 0 0` | 末端偏移量（米，本体系，沿工具轴 +z）：控制的工具点相对 tip link 的偏移。**出厂 `0 0 0` = 直接控法兰**；装夹爪/灵巧手时设为如 `0 0 0.18` 延伸到抓取点 |
 | `--deadband-scale` | `1.0` | 静止死区阈值乘数；`0`=关掉（**会放行追踪噪声**）。出厂值在 60Hz 下等于 1.8cm/s / 0.18rad/s |
 | `--smooth-alpha` | `0.5` | 增量 EMA 平滑的新样本权重，取值 `(0, 1]`；`1.0`=不平滑（最跟手也最抖）。⚠ `0` 会让臂完全不动 |
 | `--resume-margin` | `1.0` | `--ik exact` 的持位滞回（`1.0`=朴素规则） |

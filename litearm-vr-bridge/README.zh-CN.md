@@ -73,7 +73,7 @@ sudo ./scripts/install.sh     # 一次性：建 venv、装 systemd、生成 /etc
 ### 启动前体检
 
 ```bash
-python3 -m litearm_vr_bridge --doctor     # 有 fail 时退出码 1；up.sh 会自动跑它
+./scripts/up.sh --check-only     # 只跑预检后退出；有 fail 时退出码 1（正常启动也会自动跑）
 ```
 
 把现场那些"起来了但不知道为什么不动"的问题提前问清楚：端口被占、submodule 没 init、
