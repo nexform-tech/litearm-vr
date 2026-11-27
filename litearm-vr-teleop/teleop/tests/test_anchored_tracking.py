@@ -4,9 +4,10 @@ Run with PYTHONPATH=src python -m unittest discover -s tests
 -p test_anchored_tracking.py. No wall-clock sleeps, ROS, sockets or hardware.
 """
 import unittest
-from unittest.mock import patch
+from unittest.mock import call, patch
 
 import numpy as np
+import pybullet as p
 from scipy.spatial.transform import Rotation as R
 
 from litearm_teleop.teleop_sim import LiteArmTeleopSim, Tuning
@@ -54,6 +55,35 @@ class AnchoredTrackingTests(unittest.TestCase):
             arm.update_pose([min(i, 100)*.0001, 0, 0], IDENTITY_QUAT, i*DT)
             arm.tick(i*DT)
         self.assert_tracking(arm)
+
+    def test_gui_drains_pending_events_periodically_without_moving_the_arm(self):
+        # Use a real physics client without requiring a display in CI.
+        connect = p.connect
+        with (
+            patch.object(p, "connect", side_effect=lambda mode: connect(p.DIRECT)),
+            patch.object(p, "configureDebugVisualizer", wraps=p.configureDebugVisualizer) as gui,
+        ):
+            sim = LiteArmTeleopSim(viewer="gui", side=True)
+        self.sims.append(sim)
+        gui.assert_any_call(p.COV_ENABLE_MOUSE_PICKING, 0, physicsClientId=sim._cid)
+        before = sim.get_joint_states()
+        with (
+            patch("litearm_teleop.teleop_sim.time.monotonic", side_effect=[1., 1.05, 1.11]),
+            patch.object(p, "stepSimulation", wraps=p.stepSimulation) as step,
+            patch.object(p, "getKeyboardEvents") as keys,
+        ):
+            sim.poll_keyboard()
+            sim.poll_keyboard()
+            sim.poll_keyboard()
+        self.assertEqual(step.call_args_list, [call(physicsClientId=sim._cid)] * 2)
+        keys.assert_not_called()
+        np.testing.assert_allclose(sim.get_joint_states()[1], before[1], atol=1e-12, rtol=0)
+
+    def test_direct_viewer_does_not_step_physics_to_drain_gui_events(self):
+        sim, _ = self.make()
+        with patch.object(p, "stepSimulation") as step:
+            sim.poll_keyboard()
+        step.assert_not_called()
 
     def test_pin_backend_tracks_persistent_pose(self):
         try:

@@ -1555,6 +1555,8 @@ class LiteArmTeleopSim:
     双臂正装 URDF（两只独立竖直臂、无立柱）。
     """
 
+    _GUI_EVENT_STEP_INTERVAL = 0.1  # seconds between synchronous GUI commands
+
     def __init__(self, dual=False, viewer="gui", side=False, ik_backend="pybullet",
                  tcp_offset=None, tuning=None, probe=None, sim_config=None,
                  upright=False):
@@ -1593,8 +1595,16 @@ class LiteArmTeleopSim:
             #   侧装（单/双臂）臂沿 +X 伸展 → yaw=-90（屏幕右=-Y，屏幕深处=+X）
             #   正装（单/双臂）臂沿 +Y 伸展 → yaw=0  （屏幕右=+X，屏幕深处=+Y）
             self._cid = p.connect(p.GUI)
+            # PyBullet drains its GUI plugin event queue in the post-step callback.
+            # A small positive step runs that callback in this kinematic scene.
+            p.setPhysicsEngineParameter(fixedTimeStep=1e-6, numSubSteps=0,
+                                        physicsClientId=self._cid)
+            self._next_gui_event_step = 0.0
             p.configureDebugVisualizer(
                 p.COV_ENABLE_GUI, 0, physicsClientId=self._cid)
+            # Keep pointer input for the camera without applying drag constraints.
+            p.configureDebugVisualizer(
+                p.COV_ENABLE_MOUSE_PICKING, 0, physicsClientId=self._cid)
             if is_side_mount:
                 p.resetDebugVisualizerCamera(
                     1.02, -90, -15, [0.25, 0.0, 0.10], physicsClientId=self._cid)
@@ -1699,8 +1709,13 @@ class LiteArmTeleopSim:
         self._arms[side].update_pose(pos, quat, now)
 
     def poll_keyboard(self):
-        """GUI 键盘轮询（A 键回零）。与 marker 绘制解耦：控制环每次 tick 都调用它，
-        但不再因此重画 marker（marker 已按 10/2 Hz 限流，见 ArmVisualMarker）。"""
+        """处理 GUI 输入事件，并在启用时处理 A 键回零。"""
+        if self._viewer == "rviz":
+            return
+        now = time.monotonic()
+        if now >= self._next_gui_event_step:
+            p.stepSimulation(physicsClientId=self._cid)
+            self._next_gui_event_step = now + self._GUI_EVENT_STEP_INTERVAL
         if not getattr(self, "_gui_ok", False):
             return
         try:
@@ -1822,6 +1837,7 @@ class LiteArmTeleopSim:
         while True:
             for arm in self._arms.values():
                 arm._get_robot_state_vector()
+            self.poll_keyboard()
             now = time.time()
             dt = now - self._last_iter if hasattr(self, "_last_iter") else 0
             if dt < period:
